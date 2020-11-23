@@ -133,7 +133,7 @@ def main():
           f"test size {len(data_test)}, total {n}")
 
     # make output folder (and path to it) if missing
-    os.makedirs(args.output_folder, exist_ok=True)
+    os.makedirs(args.target, exist_ok=True)
     # write TFRecords
     write_tfrecord(data_train, os.path.join(args.target, 'det_train.tfrec'))
     write_tfrecord(data_val, os.path.join(args.target, 'det_val.tfrec'))

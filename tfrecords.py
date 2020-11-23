@@ -47,7 +47,7 @@ def bytes_feature(value):
 
 def load_file(file_path):
     """Load a file into a string using TensorFlow GFile."""
-    with tf.gfile.GFile(file_path, 'rb') as fp:
+    with tf.io.gfile.GFile(file_path, 'rb') as fp:
         file_data = fp.read()
     return file_data
 

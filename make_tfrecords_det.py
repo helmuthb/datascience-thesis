@@ -3,7 +3,7 @@ import os
 import random
 import argparse
 import json
-from tfrecords import BBox, write_tfrecord
+from tfrecords_det import BBox, write_tfrecord
 
 
 # Object classes (for bounding boxes) which are used in RailSem

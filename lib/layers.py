@@ -7,7 +7,7 @@ Additional layers as needed for SSD-Lite and MobileNetV2.
 import tensorflow as tf
 from tensorflow.keras.layers import (
     Layer, BatchNormalization, Conv2D, ReLU, DepthwiseConv2D, AveragePooling2D,
-    Concatenate, Dropout)
+    Concatenate, Dropout, Add)
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -82,7 +82,7 @@ def separable_conv2d(inputs, name, num_filters, strides, dilation_rate=1):
             inputs=inputs,
             name=f"{name}_dw",
             strides=strides,
-            rate=dilation_rate
+            dilation_rate=dilation_rate
             )
     return conv_bn_relu6(
             inputs=depthwise,
@@ -132,7 +132,7 @@ def bottleneck2(
         name=f"{name}_project_bn"
     )(project_conv)
     if strides == 1 and num_filters == in_channels:
-        added = tf.math.add(project_bn, inputs, name=f"{name}_added")
+        added = Add(name=f"{name}_added")([project_bn, inputs])
     else:
         added = project_bn
     return added, expand
@@ -161,11 +161,27 @@ class AdaptiveAvgPool2D(Layer):
         return self.avg_layer(inputs)
 
 
+class ImageResize(Layer):
+    """Keras Layer for resizing of an image.
+    """
+    def __init__(self, name, img_size):
+        super(ImageResize, self).__init__(name=name)
+        self.img_size = img_size
+
+    def call(self, inputs):
+        return tf.image.resize(inputs, self.img_size)
+
+    def get_config(self):
+        config = super(ImageResize, self).get_config()
+        config.update({'img_size': self.img_size})
+        return config
+
+
 def aspp(inputs, name, output_stride):
     """
     """
     # original size
-    img_size = inputs.shape.as_list[1:3]
+    img_size = inputs.shape[1:3]
     # rates in atrous convolutions
     if output_stride == 8:
         atrous_rates = [12, 24, 36]
@@ -182,7 +198,7 @@ def aspp(inputs, name, output_stride):
         num_filters=256,
         strides=1,
         kernel_size=(1, 1))
-    part1 = tf.image.resize(part1, size=img_size, name=f"{name}_p1_resize")
+    part1 = ImageResize(name=f"{name}_p1_resize", img_size=img_size)(part1)
     # part 2: 1x1 convolution
     part2 = conv_bn_relu6(
         inputs,
@@ -194,12 +210,12 @@ def aspp(inputs, name, output_stride):
     partX = [
         separable_conv2d(
             inputs,
-            name=f"{name}_px_{r}",
+            name=f"{name}_p{i}_{r}",
             num_filters=256,
             strides=1,
-            rate=r
+            dilation_rate=r
             )
-        for r in atrous_rates]
+        for i, r in enumerate(atrous_rates, 3)]
     # concatenate
     concat = Concatenate(name=f"{name}_concat")([part1, part2] + partX)
     # project
@@ -208,7 +224,8 @@ def aspp(inputs, name, output_stride):
         name=f"{name}_project",
         num_filters=256,
         strides=1,
-        rate=1
+        kernel_size=(1, 1),
+        dilation_rate=1
     )
     # add dropout
     return Dropout(rate=0.5, name=f"{name}_dropout")(projected)
@@ -218,8 +235,8 @@ def decoder(inputs, inputs2, name):
     """
     """
     # resize inputs to the size of inputs2
-    img_size = inputs2.shape.as_list[1:3]
-    x = tf.image.resize(inputs, size=img_size, name="f{name}_resize")
+    img_size = inputs2.shape[1:3]
+    x = ImageResize(img_size=img_size, name=f"{name}_resize")(inputs)
     # 1x1 convolution on the second inputs
     y = conv_bn_relu6(
         inputs=inputs2,
@@ -234,12 +251,14 @@ def decoder(inputs, inputs2, name):
     x = separable_conv2d(
         inputs=x,
         name=f"{name}_sepconv1",
-        num_filters=256
+        num_filters=256,
+        strides=1,
     )
     # second separable convolution
     x = separable_conv2d(
         inputs=x,
         name=f"{name}_sepconv2",
-        num_filters=256
+        num_filters=256,
+        strides=1,
     )
     return x

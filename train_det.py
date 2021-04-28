@@ -8,7 +8,7 @@ from lib.np_bbox_utils import pred_to_boxes
 from lib.ssdlite import ssdlite
 from lib.losses import SSDLoss
 from lib.tfr_utils import read_tfrecords
-from lib.preprocess import preprocess
+from lib.preprocess import preprocess_det
 
 
 def main():
@@ -37,8 +37,8 @@ def main():
     val_ds_orig = read_tfrecords(os.path.join(args.data, 'det_val.tfrec'))
 
     # Preprocess data
-    train_ds = train_ds_orig.map(preprocess((300, 300), anchors, 11))
-    val_ds = val_ds_orig.map(preprocess((300, 300), anchors, 11))
+    train_ds = train_ds_orig.map(preprocess_det((300, 300), anchors, 11))
+    val_ds = val_ds_orig.map(preprocess_det((300, 300), anchors, 11))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=8)

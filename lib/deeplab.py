@@ -4,11 +4,11 @@
 This package defines the DeepLab segmentation model.
 """
 
-import tensorflow as tf
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Conv2D, Softmax
+from tensorflow.keras.layers import Conv2D, Input
 
-from .layers import aspp, decoder
+from .mobilenet import mobilenetv2
+from .layers import ImageResize, aspp, decoder
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -30,17 +30,32 @@ def add_deeplab_features(
     # Add ASPP blocks
     x = aspp(outputs, name="aspp", output_stride=output_stride)
     # fetch skip feature
-    skip = base.get_layer(name="bottleneck_2")
+    skip = base.get_layer(name="bottleneck_2_project_bn").output
     # Add decoder block
-    x = decoder(x, skip)
+    x = decoder(x, skip, name="decoder")
     # final prediction block
     x = Conv2D(
         filters=num_classes,
         kernel_size=(1, 1),
         name="deeplab_conv2d")(x)
     # resize to original size
-    img_size = inputs.shape.as_list[1:3]
-    x = tf.image.resize(x, img_size, name="deeplab_resize")
+    img_size = inputs.shape[1:3]
+    x = ImageResize(img_size=img_size, name="deeplab_output")(x)
     # softmax activation
-    x = Softmax(name="deeplab_softmax")(x)
-    return Model(inputs=inputs, outputs=x, name="deeplab")
+    # x = Softmax(name="deeplab_softmax")(x)
+    # return outputs
+    return x
+    # return Model(inputs=inputs, outputs=x, name="deeplab")
+
+
+def deeplab(input_shape, n_classes):
+    """Get DeepLab model based on MobileNetV2.
+    """
+    input_layer = Input(
+        shape=(input_shape[0], input_shape[1], 3))
+    # base model
+    base = mobilenetv2(input_layer)
+    # extended model
+    x = add_deeplab_features(base, n_classes)
+    model = Model(inputs=input_layer, outputs=x, name="deeplab")
+    return model

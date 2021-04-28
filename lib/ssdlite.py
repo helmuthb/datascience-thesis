@@ -138,7 +138,7 @@ def detection_head(n_classes, *layers):
         for i, out_bbox in enumerate(out_bboxes)
     ])
     # return bounding boxes & classes concatenated
-    return tf.keras.layers.Concatenate()([bboxes, classes])
+    return tf.keras.layers.Concatenate(name="ssd_output")([bboxes, classes])
 
 
 def combine_boxes_classes(bboxes, classes, n_classes):

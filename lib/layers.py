@@ -124,6 +124,7 @@ def bottleneck2(
     project_conv = Conv2D(
         filters=num_filters,
         kernel_size=(1, 1),
+        use_bias=False,
         name=f"{name}_project_conv"
     )(depthwise)
     project_bn = BatchNormalization(

@@ -121,7 +121,7 @@ def preprocess(size, tf_anchors_cwh, n_seg, n_det):
         # return preprocessed image & data
         return image, mask, gt
 
-    def _preprocess_wrap(image, boxes_xy, boxes_cl, mask):
+    def _preprocess_wrap(image, boxes_xy, boxes_cl, mask, name):
         image, mask, gt = tf.py_function(
             _preprocess,
             (image, boxes_xy, boxes_cl, mask),

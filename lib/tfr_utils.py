@@ -134,9 +134,11 @@ def img_from_example(example):
         bboxes (tf.Tensor): Bounding boxes of the image.
         classes (tf.Tensor): Numeric object classes of the image.
         mask (tf.Tensor): Segmentation mask of the image.
+        name (tf.string): Name of the image.
     """
     # parse the image data
     data = tf.io.parse_single_example(example, feature_description)
+    name = data['image/source_id']
     jpeg = data['image/encoded']
     image = tf.cast(tf.image.decode_jpeg(jpeg, channels=3), tf.float32)
     png = data['image/segmentation/mask']
@@ -150,7 +152,7 @@ def img_from_example(example):
     # fetch classes
     classes = data['image/object/class/label'].values
     # return image, classes & bboxes
-    return image, bboxes, classes, mask
+    return image, bboxes, classes, mask, name
 
 
 def write_tfrecords(rows, out_file, num_shards, verbose=True):

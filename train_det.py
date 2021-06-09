@@ -15,9 +15,21 @@ def main():
     min_confidence = .1
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--data',
+        '--tfrecords',
         type=str,
         help='Directory with TFrecords.',
+        required=True
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        help='Directory for model.',
+        required=True
+    )
+    parser.add_argument(
+        '--epochs',
+        type=int,
+        help='Number of epochs.',
         required=True
     )
     args = parser.parse_args()
@@ -33,8 +45,10 @@ def main():
     )
 
     # Load training & validation data
-    train_ds_orig = read_tfrecords(os.path.join(args.data, 'det_train.tfrec'))
-    val_ds_orig = read_tfrecords(os.path.join(args.data, 'det_val.tfrec'))
+    train_ds_orig = read_tfrecords(
+        os.path.join(args.tfrecords, 'det_train.tfrec'))
+    val_ds_orig = read_tfrecords(
+        os.path.join(args.tfrecords, 'det_val.tfrec'))
 
     # Preprocess data
     train_ds = train_ds_orig.map(preprocess_det((300, 300), anchors, 11))
@@ -45,14 +59,17 @@ def main():
     val_ds_batch = val_ds.batch(batch_size=8)
 
     # load model or train
-    if os.path.isdir("model"):
+    if os.path.isdir(f"{args.model}/model"):
         with custom_object_scope({'SSDLoss': SSDLoss}):
-            model = tf.keras.models.load_model("model")
+            model = tf.keras.models.load_model(f"{args.model}/model")
     else:
         # Perform training
-        model.fit(train_ds_batch, epochs=1, validation_data=val_ds_batch)
+        model.fit(
+                train_ds_batch,
+                epochs=args.epochs,
+                validation_data=val_ds_batch)
         # save model
-        model.save("model")
+        model.save(f"{args.model}/model")
 
     # perform inference on validation set
     preds = model.predict(val_ds_batch)
@@ -75,7 +92,7 @@ def main():
             color = (0, 255, 0)
             cv2.rectangle(img, top_left, bot_right, color, 2)
         # save image
-        cv2.imwrite(f"img_val{idx:03}.jpg", img)
+        cv2.imwrite(f"{args.model}/img_val{idx:03}.jpg", img)
 
     # perform inference on training set
     preds = model.predict(train_ds_batch)
@@ -97,7 +114,7 @@ def main():
             color = (0, 255, 0)
             cv2.rectangle(img, top_left, bot_right, color, 2)
         # save image
-        cv2.imwrite(f"img_train{idx:03}.jpg", img)
+        cv2.imwrite(f"{args.model}/img_train{idx:03}.jpg", img)
 
     # result = model.evaluate(val_ds)
     # print(result)

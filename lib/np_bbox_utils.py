@@ -414,7 +414,7 @@ def pred_to_boxes(pred, anchors_cwh, min_confidence=0.2, iou_threshold=0.45):
             the network.
         anchors_cwh (np.ndarray(n, 4)): anchor boxes.
         min_confidence (float): only use predictions larger than this.
-        iou_threshold (float): threshold used for non-maximum suppression.
+        iou_threshold (float): TODO threshold used for non-maximum suppression.
     Returns:
         boxes_xy (np.ndarray(n2, 4)): boxes predicted from network.
         boxes_cl (np.ndarray(n2)): integer classes.

@@ -20,24 +20,40 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def smooth_l1(x1, x2):
+def smooth_l1(labels, preds):
     """Smooth L1 Loss as introduced by Faster R-CNN.
     It takes the L1 loss if larger than 1, and otherwise
     the L2 loss.
 
     Args:
-        x1 (tf.Tensor): One tensor.
-        x2 (tf.Tensor): Another tensor.
+        labels (tf.Tensor): One tensor containing the ground truth.
+        preds (tf.Tensor): Another tensor containing the prediction.
     Returns:
         smooth_l1 (tf.Tensor): Smooth L1 loss.
     """
-    delta_x = tf.abs(x1 - x2)
-    delta_x2 = (x1 - x2) ** 2
+    delta_y = tf.abs(preds - labels)
+    delta_y2 = (preds - labels) ** 2
     delta_smooth = tf.where(
-        tf.math.less(delta_x, 1),
-        0.5*delta_x2,
-        delta_x-0.5)
+        tf.math.less(delta_y, 1.),
+        0.5*delta_y2,
+        delta_y-0.5)
     return tf.reduce_sum(delta_smooth, axis=-1)
+
+
+def softmax_loss(labels, preds):
+    """Softmax Loss as used in SSD.
+
+    Args:
+        label (tf.Tensor): One tensor containing the ground truth.
+        preds (tf.Tensor): Another tensor containing the predictions.
+    Returns:
+        softmax_loss (tf.Tensor): Softmax loss.
+    """
+    # ensure no prediction is zero (for logarithm)
+    preds = tf.math.maximum(preds, 1.e-15)
+    # cross entropy  - parts to sum up
+    entropy_parts = labels * tf.math.log(preds)
+    return -1. * tf.reduce_sum(entropy_parts, axis=-1)
 
 
 class SSDLoss(Loss):
@@ -55,19 +71,24 @@ class SSDLoss(Loss):
         config['num_classes'] = self.num_classes
         return config
 
-    def call(self, y_true, y_pred):
+    def call(self, labels, logits):
         # classification loss: using softmax_cross_entropy_with_logits
-        cls_loss = tf.nn.softmax_cross_entropy_with_logits(
-            labels=y_true,
-            logits=y_pred,
-        )
+        if True:
+            cls_loss = tf.nn.softmax_cross_entropy_with_logits(
+                labels=labels[:, :, :-4],
+                logits=logits[:, :, :-4],
+            )
+        # calculate softmax of logits
+        y_pred = tf.nn.softmax(logits)
+        # classification loss: using softmax loss
+        # cls_loss = softmax_loss(labels[:, :, :-4], y_pred[:, :, :-4])
         # localization loss: using smooth L1 loss
-        loc_loss = smooth_l1(y_true[:, :, -4:], y_pred[:, :, -4:])
+        loc_loss = smooth_l1(labels[:, :, -4:], y_pred[:, :, -4:])
         # which true items are negative (i.e. "background" class)?
-        y_neg = y_true[:, :, 0]
+        y_neg = labels[:, :, 0]
         # which true items are positive (i.e. a class != background)?
-        y_pos = tf.reduce_sum(y_true[:, :, 1:-4], axis=-1)
-        # number of positivies & negatives in the batch
+        y_pos = tf.reduce_sum(labels[:, :, 1:-4], axis=-1)
+        # number of positives & negatives in the batch
         n_pos = tf.reduce_sum(y_pos)
         n_neg = tf.reduce_sum(y_neg)
         # how many negatives to "hard mine"?
@@ -83,8 +104,8 @@ class SSDLoss(Loss):
         # for the negative loss there is no location loss so that's all
         neg_loss = tf.reduce_sum(neg_loss_hard)
         # now the positive loss sum - location and classification
-        pos_loc_loss = tf.reduce_sum(loc_loss * y_pos)
-        pos_cls_loss = tf.reduce_sum(cls_loss * y_pos)
+        pos_loc_loss = tf.reduce_sum(loc_loss * y_pos, axis=-1)
+        pos_cls_loss = tf.reduce_sum(cls_loss * y_pos, axis=-1)
         # we return the total loss - relative to the number of
         # positive boxes
         return (neg_loss + pos_loc_loss + pos_cls_loss) / tf.maximum(1., n_pos)

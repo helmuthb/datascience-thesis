@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope, plot_model
 
 from lib.deeplab import add_deeplab_features
+from lib.np_bbox_utils import BBoxUtils
 from lib.preprocess import preprocess
 from lib.ssdlite import (
     add_ssdlite_features, detection_head, get_anchor_boxes_cwh,
@@ -112,6 +113,10 @@ def main():
     # build model
     models = ssd_deeplab_model((300, 300), 11, 11)
     model, anchor_boxes_cwh, base, deeplab, ssd = models
+
+    # Bounding box utility object
+    bbox_util = BBoxUtils(11, anchor_boxes_cwh)
+
     if plot_dir:
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir)
@@ -152,15 +157,15 @@ def main():
 
     # Load training & validation data
     train_ds_orig = read_tfrecords(
-            os.path.join(tfrecdir, 'det_train.tfrec'))
+            os.path.join(tfrecdir, 'train.tfrec'))
     val_ds_orig = read_tfrecords(
-            os.path.join(tfrecdir, 'det_val.tfrec'))
+            os.path.join(tfrecdir, 'val.tfrec'))
 
     # Preprocess data
     train_ds = train_ds_orig.map(
-        preprocess((300, 300), anchor_boxes_cwh, 11, 11))
+        preprocess((300, 300), bbox_util, 11))
     val_ds = val_ds_orig.map(
-        preprocess((300, 300), anchor_boxes_cwh, 11, 11))
+        preprocess((300, 300), bbox_util, 11))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=8)
@@ -170,7 +175,7 @@ def main():
     if in_model:
         with custom_object_scope({'SSDLoss': SSDLoss}):
             model = tf.keras.models.load_model(in_model)
-    
+
     # perform training
     model.fit(train_ds_batch, epochs=num_epochs, validation_data=val_ds_batch)
 

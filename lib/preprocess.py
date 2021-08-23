@@ -6,7 +6,7 @@ Preprocessing of images for SSD.
 
 import tensorflow as tf
 
-from .np_bbox_utils import map_anchors_xy, to_xy
+from .np_bbox_utils import BBoxUtils
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -19,7 +19,7 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def preprocess_det(size, tf_anchors_cwh, n_classes):
+def preprocess_det(size: tuple[int], bbox_util: BBoxUtils):
     """Get preprocessing function for object detection.
 
     The resulting function will expect image, and optionally
@@ -30,11 +30,8 @@ def preprocess_det(size, tf_anchors_cwh, n_classes):
 
     Args:
         size (tuple(int)): Output size of the images.
-        tf_anchors_cwh (tf.Tensor [n_anchor, 4]): Anchor boxes in cx/cy/w/h.
-        n_classes (int): Number of classes.
+        bbox_util (BBoxUtils): Bounding box utility object.
     """
-    anchors_cwh = tf_anchors_cwh.numpy()
-    anchors_xy = to_xy(anchors_cwh)
 
     def _preprocess(image, boxes_xy, boxes_cl):
         """Preprocess image: resize, scale, filter small boxes.
@@ -52,7 +49,7 @@ def preprocess_det(size, tf_anchors_cwh, n_classes):
         boxes_xy = boxes_xy.numpy()
         boxes_cl = boxes_cl.numpy()
         # map anchors to boxes
-        gt = map_anchors_xy(anchors_xy, boxes_xy, boxes_cl, n_classes)
+        gt = bbox_util.map_anchors_xy(boxes_xy, boxes_cl)
         # return preprocessed image & data
         return image, tf.convert_to_tensor(gt, dtype=tf.float32)
 
@@ -93,11 +90,14 @@ def preprocess_seg(size, num_classes):
     return _preprocess_wrap
 
 
-def preprocess(size, tf_anchors_cwh, n_seg, n_det):
+def preprocess(size: tuple[int], bbox_utils: BBoxUtils, n_seg: int):
+    """Preprocess image: resize, scale, filter small boxes.
+
+        Args:
+            size (tuple(int)): Target image size.
+            bbox_util (BBoxUtils): Bounding box utility class.
+            n_seg (int): Number of classes used for segmentation.
     """
-    """
-    anchors_cwh = tf_anchors_cwh.numpy()
-    anchors_xy = to_xy(anchors_cwh)
 
     def _preprocess(image, boxes_xy, boxes_cl, mask):
         # resize image
@@ -108,7 +108,7 @@ def preprocess(size, tf_anchors_cwh, n_seg, n_det):
         boxes_xy = boxes_xy.numpy()
         boxes_cl = boxes_cl.numpy()
         # map anchors to boxes
-        gt = map_anchors_xy(anchors_xy, boxes_xy, boxes_cl, n_det)
+        gt = bbox_utils.map_anchors_xy(boxes_xy, boxes_cl)
         # ground truth as tensor
         gt = tf.convert_to_tensor(gt, dtype=tf.float32)
         # resize mask

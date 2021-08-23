@@ -8,6 +8,7 @@ from math import sqrt
 from itertools import product
 
 import tensorflow as tf
+import numpy as np
 from tensorflow.keras.models import Model
 
 from .layers import bottleneck
@@ -30,9 +31,9 @@ OBJ_SCALES = [0.1, 0.2, 0.375, 0.55, 0.725, 0.9]
 # A-priori aspect ratios to use for anchor prediction boxes
 ASPECT_RATIOS = [
     [1., 2., 0.5],
-    [1., 2., 3., 0.5, 1/3],
-    [1., 2., 3., 0.5, 1/3],
-    [1., 2., 3., 0.5, 1/3],
+    [1., 2., 3., 0.5, 1./3.],
+    [1., 2., 3., 0.5, 1./3.],
+    [1., 2., 3., 0.5, 1./3.],
     [1., 2., 0.5],
     [1., 2., 0.5]
 ]
@@ -183,7 +184,7 @@ def get_anchor_boxes_cwh(*layers):
                 additional_scale = 1.
             boxes.append([x, y, additional_scale, additional_scale])
     # clip the result
-    return tf.clip_by_value(boxes, 0., 1.)
+    return np.clip(boxes, 0., 1.)
 
 
 def ssdlite(input_shape, n_classes):

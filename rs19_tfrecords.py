@@ -74,9 +74,9 @@ def main():
         required=True
     )
     parser.add_argument(
-        '--target',
+        '--tfrecords',
         type=str,
-        help="Where to save TFRecords.",
+        help="Directory with output TFRecords.",
         required=True
     )
     parser.add_argument(
@@ -117,11 +117,11 @@ def main():
           f"test size {len(data_test)}, total {n}")
 
     # make output folder (and path to it) if missing
-    os.makedirs(args.target, exist_ok=True)
+    os.makedirs(args.tfrecords, exist_ok=True)
     # write TFRecords
-    write_tfrecords(data_train, os.path.join(args.target, 'det_train.tfrec'), 5)
-    write_tfrecords(data_val, os.path.join(args.target, 'det_val.tfrec'), 1)
-    write_tfrecords(data_test, os.path.join(args.target, 'det_test.tfrec'), 1)
+    write_tfrecords(data_train, os.path.join(args.tfrecords, 'train.tfrec'), 5)
+    write_tfrecords(data_val, os.path.join(args.tfrecords, 'val.tfrec'), 1)
+    write_tfrecords(data_test, os.path.join(args.tfrecords, 'test.tfrec'), 1)
 
 
 if __name__ == '__main__':

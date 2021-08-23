@@ -4,7 +4,7 @@
 import numpy as np
 import pytest
 
-from ..np_bbox_utils import (boxes_decode_cwh, map_anchors_xy,
+from ..np_bbox_utils import (boxes_decode_cwh, map_defaults_xy,
                              non_maximum_suppression_xy, to_cwh, to_xy,
                              intersection_xy, iou_xy, one_box_encode_cwh,
                              one_box_decode_cwh, one_row_gt_cwh)
@@ -168,10 +168,10 @@ def test_iou_2x1():
 
 
 def test_adjust():
-    anchors_xy = np.array([
-        [.15, .15, .45, .45],  # anchor left-top
-        [.35, .35, .65, .65],  # anchor in the center
-        [.55, .55, .85, .85],  # anchor right-bottom
+    defaults_xy = np.array([
+        [.15, .15, .45, .45],  # default left-top
+        [.35, .35, .65, .65],  # default in the center
+        [.55, .55, .85, .85],  # default right-bottom
     ])
     boxes_xy = np.array([
         [.15, .15, .45, .45],  # box left-top
@@ -179,17 +179,17 @@ def test_adjust():
         [.45, .45, .75, .75],  # box right-bottom
     ])
     # calculate cwh boxes
-    anchors_cwh = to_cwh(anchors_xy)
+    defaults_cwh = to_cwh(defaults_xy)
     boxes_cwh = to_cwh(boxes_xy)
     # calculate all distortions
-    dist = [one_box_encode_cwh(a, b) for a, b in zip(anchors_cwh, boxes_cwh)]
+    dist = [one_box_encode_cwh(a, b) for a, b in zip(defaults_cwh, boxes_cwh)]
     # calculate all (hopefully) original boxes
     b2_cwh = np.array(
-        [one_box_decode_cwh(a, d) for a, d in zip(anchors_cwh, dist)])
-    b2b_cwh = boxes_decode_cwh(anchors_cwh, np.array(dist))
+        [one_box_decode_cwh(a, d) for a, d in zip(defaults_cwh, dist)])
+    b2b_cwh = boxes_decode_cwh(defaults_cwh, np.array(dist))
     # 1st case - identical boxes: distortion = 0
     assert np.all(dist[0] == 0.)
-    # 2nd case - box a bit smaller than anchor
+    # 2nd case - box a bit smaller than default
     # center not moved
     assert dist[1][0] == 0.
     assert dist[1][1] == 0.
@@ -209,27 +209,27 @@ def test_adjust():
 
 
 def test_one_row():
-    anchors_xy = np.array([
-        [.15, .15, .45, .45],  # anchor left-top
-        [.35, .35, .65, .65],  # anchor in the center
-        [.55, .55, .85, .85],  # anchor right-bottom
+    defaults_xy = np.array([
+        [.15, .15, .45, .45],  # default left-top
+        [.35, .35, .65, .65],  # default in the center
+        [.55, .55, .85, .85],  # default right-bottom
     ])
     boxes_xy = np.array([
         [.15, .15, .45, .45],  # box left-top
         [.45, .45, .55, .55],  # box in the center
         [.45, .45, .75, .75],  # box right-bottom
     ])
-    anchors_cwh = to_cwh(anchors_xy)
+    defaults_cwh = to_cwh(defaults_xy)
     boxes_cwh = to_cwh(boxes_xy)
     clses = [-1, 0, 1]
     n_classes = 10
     # calculate all rows
     rows = [one_row_gt_cwh(a, b, c, n_classes)
-            for a, b, c in zip(anchors_cwh, boxes_cwh, clses)]
+            for a, b, c in zip(defaults_cwh, boxes_cwh, clses)]
     # all rows have shape (n_classes+4,)
     for r in rows:
         assert r.shape == (n_classes+4,)
-    # class -1 and identical box / anchor should go to all zero
+    # class -1 and identical box / default should go to all zero
     print(rows[0])
     assert np.all(rows[0] == pytest.approx(0.))
     # class 0 should mean element [0] to be 1
@@ -239,13 +239,13 @@ def test_one_row():
     assert rows[2][1] == pytest.approx(1.)
 
 
-def test_map_anchors():
-    anchors_xy = np.array([
-        [.15, .15, .45, .45],  # anchor left-top
-        [.55, .15, .85, .45],  # anchor right-top
-        [.35, .35, .65, .65],  # anchor in the center
-        [.15, .55, .45, .85],  # anchor left-bottom
-        [.55, .55, .85, .85],  # anchor right-bottom
+def test_map_defaults():
+    defaults_xy = np.array([
+        [.15, .15, .45, .45],  # default left-top
+        [.55, .15, .85, .45],  # default right-top
+        [.35, .35, .65, .65],  # default in the center
+        [.15, .55, .45, .85],  # default left-bottom
+        [.55, .55, .85, .85],  # default right-bottom
     ])
     boxes_xy = np.array([
         [.15, .15, .45, .45],  # box left-top
@@ -254,8 +254,8 @@ def test_map_anchors():
     ])
     clses = np.array([1, 2, 3])
     n_classes = 10
-    # get anchors
-    rows = map_anchors_xy(anchors_xy, boxes_xy, clses, n_classes)
+    # get defaults
+    rows = map_defaults_xy(defaults_xy, boxes_xy, clses, n_classes)
     # assert shape (5, n_classes+4)
     assert rows.shape == (5, n_classes+4)
     # assert first row to be class 1

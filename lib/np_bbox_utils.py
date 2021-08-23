@@ -152,14 +152,14 @@ def iou_xy(b1_xy, b2_xy, pairwise=True):
 def boxes_classes(row):
     """Split an output row into boxes and classes.
 
-    The boxes are defined as distortions from the corresponding anchor box,
+    The boxes are defined as distortions from the corresponding default box,
     and the classes are one-hot encoded or sigmoids.
 
     Args:
         row (array-like(N,B,n_classes+4)): Ground truth or output from
             the model.
     Returns:
-        boxes (array-like(N,B,4)): Distortions from the corresponding anchor.
+        boxes (array-like(N,B,4)): Distortions from the corresponding default.
         classes (array-like(N,B,n_classes)): Class one-hot encoded.
     """
     return row[..., :4], row[..., 4:]
@@ -176,7 +176,7 @@ class BBoxUtils(object):
     NMS step is stored in the object.
     """
 
-    def __init__(self, n_classes, anchors_cwh,
+    def __init__(self, n_classes, defaults_cwh,
                  variances=(.1, .1, .2, .2), min_pos_iou=.05,
                  max_neg_iou=.03, min_area=0.00001, min_confidence=0.2,
                  iou_threshold=0.45, top_k=400):
@@ -188,21 +188,21 @@ class BBoxUtils(object):
             n_classes (int): Number of distinct classes.
             variances (np.ndarray[4]): Factors to scale the distortion.
             min_area (float): Minimum area of a box.
-            anchors_cwh (np.ndarray [n1, 4]): List of anchor boxes in c/w/h.
-            min_pos_iou (float): Minimum IoU value for mapping anchors
+            defaults_cwh (np.ndarray [n1, 4]): List of default boxes in c/w/h.
+            min_pos_iou (float): Minimum IoU value for mapping defaults
                 not assigned as optimal.
             max_neg_iou (float): Maximum IoU value for mapping to background.
             min_area (float): Minimum area of a ground truth box to be used.
             min_confidence (float): Minimum confidence (score) required for
                 using a prediction.
             iou_threshold (float): Maximum IoU value for not discarding
-                anchors similar to the one with highest confidence.
-            top_k (float): Maximum number of anchor boxes to keep.
+                defaults similar to the one with highest confidence.
+            top_k (float): Maximum number of default boxes to keep.
         """
         self.n_classes = n_classes
-        self.anchors_cwh = anchors_cwh
-        self.anchors_xy = to_xy(anchors_cwh)
-        self.n_anchors = anchors_cwh.shape[0]
+        self.defaults_cwh = defaults_cwh
+        self.defaults_xy = to_xy(defaults_cwh)
+        self.n_defaults = defaults_cwh.shape[0]
         self.variances = variances
         self.min_pos_iou = min_pos_iou
         self.max_neg_iou = max_neg_iou
@@ -211,85 +211,85 @@ class BBoxUtils(object):
         self.iou_threshold = iou_threshold
         self.top_k = top_k
 
-    def _one_box_encode_cwh(self, anchor_cwh, box_cwh):
-        """Calculate distortion needed for adjusting anchor to box.
+    def _one_box_encode_cwh(self, default_cwh, box_cwh):
+        """Calculate distortion needed for adjusting default to box.
         This calculates the delta in x/y of the center, and the
         delta factor in extending/shrinking the width/height of
-        the anchor to match the box.
-        The delta in x/y is divided by the width/height of the anchor,
+        the default to match the box.
+        The delta in x/y is divided by the width/height of the default,
         and the natural logarithm is taken from the factors.
         In addition they are all divided by the variances for scaling.
 
         Args:
-            anchor_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
+            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
             box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
         Returns:
             distortion (np.ndarray[4]): dx/dy of the center, fw/fh of the size,
                 scaled by width & variances, logarithmic for factor.
         """
-        # center: subtract, then scale by anchor width/height
-        c_delta = (box_cwh[0:2]-anchor_cwh[0:2]) / anchor_cwh[2:4]
+        # center: subtract, then scale by default width/height
+        c_delta = (box_cwh[0:2]-default_cwh[0:2]) / default_cwh[2:4]
         # width/height: logarithm of quotient
-        wh_delta = np.log(box_cwh[2:4]/anchor_cwh[2:4])
+        wh_delta = np.log(box_cwh[2:4]/default_cwh[2:4])
         delta = np.concatenate((c_delta, wh_delta))
         return delta / self.variances
 
-    def _one_box_decode_cwh(self, anchor_cwh, distort):
-        """Calculate box back from distortion of anchor.
+    def _one_box_decode_cwh(self, default_cwh, distort):
+        """Calculate box back from distortion of default.
         This calculates the box coordinates back from the distortion needed
-        to the anchor, by inverting the operations done in anchor_adjust.
+        to the default, by inverting the operations done in default_adjust.
 
         Args:
-            anchor_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
+            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
             distort (np.ndarray[4]): Distortion as used in the network.
         Returns:
             box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
         """
-        # reverse adjustment of anchor
+        # reverse adjustment of default
         delta = distort * self.variances
-        d_xy = delta[0:2] * anchor_cwh[2:4]
-        f_wh = np.exp(delta[2:4]) * anchor_cwh[2:4]
+        d_xy = delta[0:2] * default_cwh[2:4]
+        f_wh = np.exp(delta[2:4]) * default_cwh[2:4]
         # get box cwh coordinates
-        box_cwh = np.concatenate((anchor_cwh[0:2]+d_xy, f_wh))
+        box_cwh = np.concatenate((default_cwh[0:2]+d_xy, f_wh))
         return box_cwh
 
-    def _one_row_gt_cwh(self, anchor_cwh, box_cwh, cls):
-        """Get one row of ground truth for an anchor, a box and a class.
+    def _one_row_gt_cwh(self, default_cwh, box_cwh, cls):
+        """Get one row of ground truth for an default, a box and a class.
 
         Args:
-            anchor_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
+            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
             box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
             cls (int): Class of box, -1 if neutral.
         Returns:
             row_cwh (np.ndarray[n_classes+4]): Ground truth
-                row for the one box assigned to the one anchor.
+                row for the one box assigned to the one default.
                 It starts with the classes one-hot encoded and
                 ends with the bounding box adjustments.
         """
         if cls == -1:
             return np.zeros((self.n_classes+4))
         return np.concatenate((
-            self._one_box_encode_cwh(anchor_cwh, box_cwh),
+            self._one_box_encode_cwh(default_cwh, box_cwh),
             np.eye(self.n_classes)[cls],
             ))
 
     def boxes_decode_cwh(self, distorts):
-        """Calculate box back from distortion of anchor.
+        """Calculate box back from distortion of default.
         This calculates the box coordinates back from the distortion needed
-        to the anchor, by inverting the operations done in anchor_adjust.
+        to the default, by inverting the operations done in default_adjust.
 
         Args:
             distorts (np.ndarray[n, n2, 4]): Distortion as predicted.
         Returns:
             boxes_cwh (np.ndarray[n, n2, 4]): Boxes in cx/cy/w/h.
         """
-        # reverse adjustment of anchor
+        # reverse adjustment of default
         delta = distorts * self.variances
-        d_xy = delta[..., 0:2] * self.anchors_cwh[..., 2:4]
-        f_wh = np.exp(delta[..., 2:4]) * self.anchors_cwh[..., 2:4]
+        d_xy = delta[..., 0:2] * self.defaults_cwh[..., 2:4]
+        f_wh = np.exp(delta[..., 2:4]) * self.defaults_cwh[..., 2:4]
         # get box cwh coordinates
         boxes_cwh = np.concatenate(
-            (self.anchors_cwh[..., 0:2]+d_xy, f_wh),
+            (self.defaults_cwh[..., 0:2]+d_xy, f_wh),
             axis=-1)
         return boxes_cwh
 
@@ -321,13 +321,13 @@ class BBoxUtils(object):
         # return filtered classes and boxes
         return filtered_xy, filtered_cl
 
-    def map_anchors_xy_orig(self, boxes_xy, boxes_cl):
-        """Find the anchor for each box with the most overlap.
-        First each box is mapped with the anchor of highest match,
-        such that each anchor is used only once.
-        The remaining anchors are mapped to the box with highest IoU,
+    def map_defaults_xy_orig(self, boxes_xy, boxes_cl):
+        """Find the default for each box with the most overlap.
+        First each box is mapped with the default of highest match,
+        such that each default is used only once.
+        The remaining defaults are mapped to the box with highest IoU,
         as long as the IoU is at least min_pos_iou.
-        The remaing anchors are mapped to background if the largest IoU is less
+        The remaing defaults are mapped to background if the largest IoU is less
         than max_neg_iou; otherwise they are marked as neutral.
 
         Args:
@@ -335,67 +335,67 @@ class BBoxUtils(object):
             boxes_cl (np.ndarray [n2, 1]): Array of classes per box.
         Returns:
             gt (np.ndarray, [n1, n_classes+4]): The encoded ground truth,
-                where each anchor is assigned a class (one-hot-encoded) or
+                where each default is assigned a class (one-hot-encoded) or
                 to no class for "neutral", and a distortion to adjust the
-                anchor to the ground truth bounding box.
+                default to the ground truth bounding box.
         """
         # only one box provided?
         if boxes_xy.ndim == 1:
             boxes_xy = np.expand_dims(boxes_xy, 0)
         boxes_xy, boxes_cl = self._skip_small_boxes_xy(boxes_xy, boxes_cl)
         # initialize n1, n2
-        n1 = self.n_anchors
+        n1 = self.n_defaults
         n2 = boxes_xy.shape[0]
-        # assignment of anchor to box - ground truth
+        # assignment of default to box - ground truth
         gt = np.zeros((n1, self.n_classes+4))
         # no box left after skipping small ones? return as-is
         if n2 == 0:
             return gt
-        # calculate iou values for all anchors and all boxes
-        iou_vals = iou_xy(self.anchors_xy, boxes_xy, pairwise=False)
-        # loop for each box (or anchors if less):
+        # calculate iou values for all defaults and all boxes
+        iou_vals = iou_xy(self.defaults_xy, boxes_xy, pairwise=False)
+        # loop for each box (or defaults if less):
         for _ in range(min(n1, n2)):
-            # highest anchor IoU per box
-            max_anchors = np.argmax(iou_vals, axis=0)
-            max_iou = iou_vals[max_anchors, range(n2)]
+            # highest default IoU per box
+            max_defaults = np.argmax(iou_vals, axis=0)
+            max_iou = iou_vals[max_defaults, range(n2)]
             mapped_box = np.argmax(max_iou)
-            mapped_anchor = max_anchors[mapped_box]
+            mapped_default = max_defaults[mapped_box]
             # add pair to list
-            gt[mapped_anchor] = self._one_row_gt_cwh(
-                self.anchors_cwh[mapped_anchor],
+            gt[mapped_default] = self._one_row_gt_cwh(
+                self.defaults_cwh[mapped_default],
                 to_cwh(boxes_xy[mapped_box]),
                 boxes_cl[mapped_box])
-            # take anchor out from next rounds
-            iou_vals[mapped_anchor, :] = 0.
-        # remaining anchors: get maximum ground truth
-        # highest box IoU per anchor
+            # take default out from next rounds
+            iou_vals[mapped_default, :] = 0.
+        # remaining defaults: get maximum ground truth
+        # highest box IoU per default
         max_boxes = np.argmax(iou_vals, axis=1)
         max_iou = iou_vals[range(n1), max_boxes]
-        for anchor in range(n1):
+        for default in range(n1):
             # is the maximum IoU above the positive-threshold?
-            if max_iou[anchor] > self.min_pos_iou:
-                gt[anchor] = self._one_row_gt_cwh(
-                    self.anchors_cwh[anchor],
-                    to_cwh(boxes_xy[max_boxes[anchor]]),
-                    boxes_cl[max_boxes[anchor]]
+            if max_iou[default] > self.min_pos_iou:
+                gt[default] = self._one_row_gt_cwh(
+                    self.defaults_cwh[default],
+                    to_cwh(boxes_xy[max_boxes[default]]),
+                    boxes_cl[max_boxes[default]]
                 )
             # alternatively is it above the negative-threshold?
-            elif max_iou[anchor] > self.max_neg_iou:
+            elif max_iou[default] > self.max_neg_iou:
                 # then add it as "neutral"
-                gt[anchor] = self._one_row_gt_cwh(
-                    self.anchors_cwh[anchor],
-                    to_cwh(boxes_xy[max_boxes[anchor]]),
+                gt[default] = self._one_row_gt_cwh(
+                    self.defaults_cwh[default],
+                    to_cwh(boxes_xy[max_boxes[default]]),
                     -1
                 )
         return gt
 
-    def map_anchors_xy(self, boxes_xy, boxes_cl):
-        """Find the anchor for each box with the most overlap.
-        First each box is mapped with the anchor of highest match,
-        such that each anchor is used only once.
-        The remaining anchors are mapped to the box with highest IoU,
+    def map_defaults_xy(self, boxes_xy, boxes_cl):
+        """Find the default for each box with the most overlap.
+        First each box is mapped with the default of highest match,
+        such that each default is used only once.
+        The remaining defaults are mapped to the box with highest IoU,
         as long as the IoU is at least min_pos_iou.
-        The remaing anchors are mapped to background if the largest IoU is less
+        The remaing defaults are mapped to background if the largest IoU is less
         than max_neg_iou; otherwise they are marked as neutral.
 
         Args:
@@ -403,9 +403,9 @@ class BBoxUtils(object):
             boxes_cl (np.ndarray [n2, 1]): Array of classes per box.
         Returns:
             gt (np.ndarray, [n1, n_classes+4]): The encoded ground truth,
-                where each anchor is assigned a class (one-hot-encoded) or
+                where each default is assigned a class (one-hot-encoded) or
                 to no class for "neutral", and a distortion to adjust the
-                anchor to the ground truth bounding box.
+                default to the ground truth bounding box.
         """
         # only one box provided?
         if boxes_xy.ndim == 1:
@@ -413,7 +413,7 @@ class BBoxUtils(object):
         boxes_xy, boxes_cl = self._skip_small_boxes_xy(boxes_xy, boxes_cl)
         boxes_cwh = to_cwh(boxes_xy)
         # initialize n1, n2
-        n1 = self.n_anchors
+        n1 = self.n_defaults
         n2 = boxes_xy.shape[0]
         # ground truth tensor for training
         gt = np.zeros((n1, self.n_classes+4))
@@ -422,33 +422,33 @@ class BBoxUtils(object):
         # no box left after skipping small ones? return as-is
         if n2 == 0:
             return gt
-        # calculate IoU values for all anchors and all boxes
-        iou_vals = iou_xy(self.anchors_xy, boxes_xy, pairwise=False)
-        # step 1: map each box to the anchor with highest IoU
-        main_box_anchors = np.argmax(iou_vals, axis=0)
-        # removing the selected anchors (setting their IoU to 0)
+        # calculate IoU values for all defaults and all boxes
+        iou_vals = iou_xy(self.defaults_xy, boxes_xy, pairwise=False)
+        # step 1: map each box to the default with highest IoU
+        main_box_defaults = np.argmax(iou_vals, axis=0)
+        # removing the selected defaults (setting their IoU to 0)
         # from further mapping
-        iou_vals[main_box_anchors, :] = 0.
-        # add anchors to ground truth
-        for box, anchor in enumerate(main_box_anchors):
-            gt[anchor] = self._one_row_gt_cwh(
-                self.anchors_cwh[anchor],
+        iou_vals[main_box_defaults, :] = 0.
+        # add defaults to ground truth
+        for box, default in enumerate(main_box_defaults):
+            gt[default] = self._one_row_gt_cwh(
+                self.defaults_cwh[default],
                 boxes_cwh[box],
                 boxes_cl[box])
-        # step 2: find for each anchor the box with maximum IoU
-        aux_anchor_boxes = np.argmax(iou_vals, axis=1)
+        # step 2: find for each default the box with maximum IoU
+        aux_default_boxes = np.argmax(iou_vals, axis=1)
         # do they satisfy the thresholds?
-        for anchor, box in enumerate(aux_anchor_boxes):
-            if iou_vals[anchor, box] > self.min_pos_iou:
+        for default, box in enumerate(aux_default_boxes):
+            if iou_vals[default, box] > self.min_pos_iou:
                 # add them to ground truth
-                gt[anchor] = self._one_row_gt_cwh(
-                    self.anchors_cwh[anchor],
+                gt[default] = self._one_row_gt_cwh(
+                    self.defaults_cwh[default],
                     boxes_cwh[box],
                     boxes_cl[box])
-            elif iou_vals[anchor, box] > self.max_neg_iou:
+            elif iou_vals[default, box] > self.max_neg_iou:
                 # add them as neutral, i.e. class = -1
-                gt[anchor] = self._one_row_gt_cwh(
-                    self.anchors_cwh[anchor],
+                gt[default] = self._one_row_gt_cwh(
+                    self.defaults_cwh[default],
                     boxes_cwh[box],
                     -1)
         return gt

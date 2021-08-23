@@ -10,7 +10,7 @@ from lib.deeplab import add_deeplab_features
 from lib.np_bbox_utils import BBoxUtils
 from lib.preprocess import preprocess
 from lib.ssdlite import (
-    add_ssdlite_features, detection_head, get_anchor_boxes_cwh,
+    add_ssdlite_features, detection_head, get_default_boxes_cwh,
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
@@ -61,10 +61,10 @@ def ssd_deeplab_model(size, n_seg, n_det):
     combined_model = tf.keras.Model(
         inputs=input_layer,
         outputs=[deeplab_output, ssd_output])
-    # calculate anchor boxes
-    anchor_boxes_cwh = get_anchor_boxes_cwh(l1, l2, l3, l4, l5, l6)
-    # return combined model and the anchors
-    return combined_model, anchor_boxes_cwh, base, deeplab_model, ssd_model
+    # calculate default boxes
+    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
+    # return combined model and the defaults
+    return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
 
 
 def main():
@@ -112,10 +112,10 @@ def main():
 
     # build model
     models = ssd_deeplab_model((300, 300), 11, 11)
-    model, anchor_boxes_cwh, base, deeplab, ssd = models
+    model, default_boxes_cwh, base, deeplab, ssd = models
 
     # Bounding box utility object
-    bbox_util = BBoxUtils(11, anchor_boxes_cwh)
+    bbox_util = BBoxUtils(11, default_boxes_cwh)
 
     if plot_dir:
         if not os.path.exists(plot_dir):

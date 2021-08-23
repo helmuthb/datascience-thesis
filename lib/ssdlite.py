@@ -25,10 +25,10 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-# A-priori object scales to use for anchor prediction boxes
+# A-priori object scales to use for default prediction boxes
 OBJ_SCALES = [0.1, 0.2, 0.375, 0.55, 0.725, 0.9]
 
-# A-priori aspect ratios to use for anchor prediction boxes
+# A-priori aspect ratios to use for default prediction boxes
 ASPECT_RATIOS = [
     [1., 2., 0.5],
     [1., 2., 3., 0.5, 1./3.],
@@ -81,16 +81,16 @@ def ssdlite_base_layers(model: Model):
     return layer1, layer2, layer3, layer4, layer5, layer6
 
 
-def get_num_anchor_boxes():
-    """Get the number of anchor boxes.
+def get_num_default_boxes():
+    """Get the number of default boxes.
 
     For each layer and aspect ratio, add 1.
-    In addition, for each layer add one anchor box with the
+    In addition, for each layer add one default box with the
     geometric mean between the scale and the next scale.
     This explains the below formula.
 
     Returns:
-        num_anchor_boxes (list(int)): Number of anchor boxes per layer
+        num_default_boxes (list(int)): Number of default boxes per layer
     """
     return [len(a)+1 for a in ASPECT_RATIOS]
 
@@ -102,12 +102,12 @@ def detection_head(n_classes, *layers):
         l (6*tuple): Tuple of layers from MobileNetV2 & SSDLite.
     Returns:
         layer (tf.keras.layers.Layer): Combined output layer
-            of size [N, n_anchors, 4+n_classes].
+            of size [N, n_defaults, 4+n_classes].
             The first 4 in the last dimension are for
             bounding boxes, the remaining are for the classes.
     """
-    # Number of anchor boxes per layer to consider
-    n_anchors = get_num_anchor_boxes()
+    # Number of default boxes per layer to consider
+    n_defaults = get_num_default_boxes()
     # Outputs for class predictions
     out_classes = [
         tf.keras.layers.Conv2D(
@@ -115,7 +115,7 @@ def detection_head(n_classes, *layers):
             kernel_size=1,
             name=f"classes_conv{i}"
         )(layer.output)
-        for i, n_a, layer in zip(range(6), n_anchors, layers)
+        for i, n_a, layer in zip(range(6), n_defaults, layers)
     ]
     # reshape & concatenate
     classes = tf.keras.layers.Concatenate(axis=1, name='classes_concat')([
@@ -131,7 +131,7 @@ def detection_head(n_classes, *layers):
             kernel_size=1,
             name=f"bbox_conv{i}"
         )(layer.output)
-        for i, n_a, layer in zip(range(6), n_anchors, layers)
+        for i, n_a, layer in zip(range(6), n_defaults, layers)
     ]
     # reshape & concatenate
     bboxes = tf.keras.layers.Concatenate(axis=1, name='bbox_concat')([
@@ -147,11 +147,11 @@ def combine_boxes_classes(bboxes, classes, n_classes):
     It will perform a one-hot encoding of the bounding boxes,
     and concatenate the resulting tensor with the classes.
     Args:
-        bboxes (tf.Tensor, [N, n_anchors, 4]): Tensor with bounding boxes.
-        classes (tf.Tensor, [N, n_anchors]): Dense tensor with classes.
+        bboxes (tf.Tensor, [N, n_defaults, 4]): Tensor with bounding boxes.
+        classes (tf.Tensor, [N, n_defaults]): Dense tensor with classes.
         n_classes (int): Number of classes.
     Returns:
-        output (tf.Tensor, [N, n_anchors, 4+n_classes]): Combined tensor.
+        output (tf.Tensor, [N, n_defaults, 4+n_classes]): Combined tensor.
     """
     # one-hot encoding of classes
     one_hot = tf.one_hot(classes, n_classes, dtype=tf.float32, axis=-1)
@@ -159,8 +159,8 @@ def combine_boxes_classes(bboxes, classes, n_classes):
     return tf.concat([bboxes, one_hot], axis=-1)
 
 
-def get_anchor_boxes_cwh(*layers):
-    """Get the anchor bounding boxes for the given layers.
+def get_default_boxes_cwh(*layers):
+    """Get the default bounding boxes for the given layers.
     """
     boxes = []
     for i in range(6):
@@ -188,14 +188,14 @@ def get_anchor_boxes_cwh(*layers):
 
 
 def ssdlite(input_shape, n_classes):
-    """Get SSDLite model and anchor boxes.
+    """Get SSDLite model and default boxes.
 
     Args:
         input_shape (list(integer)): (height, width).
         n_classes (integer): Number of classes.
     Returns:
         ssdlite (tf.keras model): SSDLite model, with added loss.
-        anchors (float array, [n_priors, 4]): All the anchor boxes
+        defaults (float array, [n_priors, 4]): All the default boxes
             ((x, y, w, h) within [0., 1.]).
     """
     input_layer = tf.keras.layers.Input(
@@ -209,21 +209,21 @@ def ssdlite(input_shape, n_classes):
     prediction = detection_head(n_classes, l1, l2, l3, l4, l5, l6)
     # create model
     model = tf.keras.Model(inputs=input_layer, outputs=prediction)
-    # calculate anchor boxes
-    anchor_boxes_cwh = get_anchor_boxes_cwh(l1, l2, l3, l4, l5, l6)
+    # calculate default boxes
+    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
     # return both
-    return model, anchor_boxes_cwh
+    return model, default_boxes_cwh
 
 
-def get_predicted_boxes_cwh(pred_adj, anchors_cwh):
-    """Get the corrected boxes, based on the anchors and the predictions.
-    The anchor boxes (provided in center mode) and the predicted
+def get_predicted_boxes_cwh(pred_adj, defaults_cwh):
+    """Get the corrected boxes, based on the defaults and the predictions.
+    The default boxes (provided in center mode) and the predicted
     adjustments are combined to get the predicted bounding boxes.
 
     Args:
         pred_adj (tensor): location predictions, as adjustments of
             center and width / height.
-        anchors_cwh (np.ndarray): anchor boxes, in (cx/cy/w/h) format.
+        defaults_cwh (np.ndarray): default boxes, in (cx/cy/w/h) format.
     Returns:
-        pred_cwh (np.ndarray): anchor boxes.
+        pred_cwh (np.ndarray): default boxes.
     """

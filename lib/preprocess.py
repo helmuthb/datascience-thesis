@@ -48,8 +48,8 @@ def preprocess_det(size: tuple[int], bbox_util: BBoxUtils):
         # to numpy for boxes and classes
         boxes_xy = boxes_xy.numpy()
         boxes_cl = boxes_cl.numpy()
-        # map anchors to boxes
-        gt = bbox_util.map_anchors_xy(boxes_xy, boxes_cl)
+        # map defaults to boxes
+        gt = bbox_util.map_defaults_xy(boxes_xy, boxes_cl)
         # return preprocessed image & data
         return image, tf.convert_to_tensor(gt, dtype=tf.float32)
 
@@ -107,8 +107,8 @@ def preprocess(size: tuple[int], bbox_utils: BBoxUtils, n_seg: int):
         # to numpy for boxes and classes
         boxes_xy = boxes_xy.numpy()
         boxes_cl = boxes_cl.numpy()
-        # map anchors to boxes
-        gt = bbox_utils.map_anchors_xy(boxes_xy, boxes_cl)
+        # map defaults to boxes
+        gt = bbox_utils.map_defaults_xy(boxes_xy, boxes_cl)
         # ground truth as tensor
         gt = tf.convert_to_tensor(gt, dtype=tf.float32)
         # resize mask

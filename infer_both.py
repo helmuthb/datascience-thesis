@@ -11,7 +11,7 @@ import numpy as np
 from lib.preprocess import preprocess
 from lib.np_bbox_utils import BBoxUtils
 from lib.ssdlite import (
-    add_ssdlite_features, get_anchor_boxes_cwh,
+    add_ssdlite_features, get_default_boxes_cwh,
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
@@ -26,7 +26,7 @@ det_classes = ["background", "buffer-stop", "crossing", "switch-indicator",
                "track-sign-front"]
 
 
-def ssd_anchors(size):
+def ssd_defaults(size):
     """
     """
     input_layer = tf.keras.layers.Input(
@@ -36,9 +36,9 @@ def ssd_anchors(size):
     # add SSDlite layers
     ext_base = add_ssdlite_features(base)
     l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
-    # calculate anchor boxes
-    anchor_boxes_cwh = get_anchor_boxes_cwh(l1, l2, l3, l4, l5, l6)
-    return anchor_boxes_cwh
+    # calculate default boxes
+    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
+    return default_boxes_cwh
 
 
 def main():
@@ -67,11 +67,11 @@ def main():
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
 
-    # get anchor boxes
-    anchor_boxes_cwh = ssd_anchors((300, 300))
+    # get default boxes
+    default_boxes_cwh = ssd_defaults((300, 300))
 
     # Bounding box utility object
-    bbox_util = BBoxUtils(11, anchor_boxes_cwh, min_confidence=0.01)
+    bbox_util = BBoxUtils(11, default_boxes_cwh, min_confidence=0.01)
 
     # Load validation data
     val_ds_orig = read_tfrecords(

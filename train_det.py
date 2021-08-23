@@ -35,7 +35,7 @@ def main():
     args = parser.parse_args()
 
     # build model
-    model, anchors = ssdlite((300, 300), 11)
+    model, defaults = ssdlite((300, 300), 11)
 
     # Compile
     model.compile(
@@ -51,8 +51,8 @@ def main():
         os.path.join(args.tfrecords, 'det_val.tfrec'))
 
     # Preprocess data
-    train_ds = train_ds_orig.map(preprocess_det((300, 300), anchors, 11))
-    val_ds = val_ds_orig.map(preprocess_det((300, 300), anchors, 11))
+    train_ds = train_ds_orig.map(preprocess_det((300, 300), defaults, 11))
+    val_ds = val_ds_orig.map(preprocess_det((300, 300), defaults, 11))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=8)
@@ -81,9 +81,9 @@ def main():
         orig_img, orig_ann = orig
         img = orig_img*256.
         # get boxes from originals and predictions
-        # o_boxes_xy, o_boxes_cl, o_boxes_sc = pred_to_boxes(orig_ann, anchors)
+        # o_boxes_xy, o_boxes_cl, o_boxes_sc = pred_to_boxes(orig_ann, defaults)
         p_boxes_xy, p_boxes_cl, p_boxes_sc = pred_to_boxes(
-            pred, anchors, min_confidence)
+            pred, defaults, min_confidence)
         # draw bounding boxes
         for one_xy, one_cl, one_sc in zip(p_boxes_xy, p_boxes_cl, p_boxes_sc):
             one_xy *= 300
@@ -103,9 +103,9 @@ def main():
         orig_img, orig_ann = orig
         img = orig_img*256.
         # get boxes from originals and predictions
-        # o_boxes_xy, o_boxes_cl, o_boxes_sc = pred_to_boxes(orig_ann, anchors)
+        # o_boxes_xy, o_boxes_cl, o_boxes_sc = pred_to_boxes(orig_ann, defaults)
         p_boxes_xy, p_boxes_cl, p_boxes_sc = pred_to_boxes(
-            pred, anchors, min_confidence)
+            pred, defaults, min_confidence)
         # draw bounding boxes
         for one_xy, one_cl, one_sc in zip(p_boxes_xy, p_boxes_cl, p_boxes_sc):
             one_xy *= 300

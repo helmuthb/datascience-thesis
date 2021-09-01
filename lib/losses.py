@@ -115,9 +115,9 @@ class SSDLoss(Loss):
         # now the positive loss sum - location and classification
         pos_loc_loss = tf.reduce_sum(loc_loss * y_pos, axis=-1)
         pos_cls_loss = tf.reduce_sum(cls_loss * y_pos, axis=-1)
+        # scaling factor: relative to the number of positive boxes,
+        # and multiplied by batch size
+        f = tf.cast(tf.shape(labels)[0], tf.float32) / tf.maximum(1., n_pos)
         # we return the total loss
         loss = (neg_cls_loss + pos_loc_loss + pos_cls_loss)
-        # ... relative to the number of positive boxes
-        loss /= tf.maximum(1., n_pos)
-        # ... and multiplied by the batch size
-        return loss * tf.cast(tf.shape(labels)[0], tf.float32)
+        return loss * f

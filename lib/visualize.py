@@ -6,6 +6,7 @@
 import numpy as np
 import cv2
 from matplotlib import pyplot as plt
+from typing import List
 
 
 __author__ = 'Helmuth Breitenfellner'
@@ -103,7 +104,7 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
 
 
 def annotate_boxes(img: np.ndarray, b_xy: np.ndarray, b_cl: np.ndarray,
-                   b_sc: np.ndarray, classes: list[str], file_name: str):
+                   b_sc: np.ndarray, classes: List[str], file_name: str):
     """Annotate an image with the detected (or original) boxes.
     The resulting image is saved into the specified file name.
 

@@ -16,7 +16,7 @@ from lib.ssdlite import (
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
 from lib.losses import SSDLoss
-from lib.visualize import annotate_detection
+from lib.visualize import annotate_boxes, annotate_segmentation
 
 
 # Names of classes used in object detection
@@ -66,6 +66,7 @@ def main():
     # create output directory if missing
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
+    os.makedirs(f"{outdir}/seg-annotated", exist_ok=True)
 
     # get default boxes
     default_boxes_cwh = ssd_defaults((300, 300))
@@ -115,7 +116,7 @@ def main():
         # print(i, max_c)
     # combine ...
     i_origs = val_ds_orig.as_numpy_iterator()
-    for p, o in zip(preds[1], i_origs):
+    for s, p, o in zip(preds[0], preds[1], i_origs):
         image, boxes_xy, boxes_cl, mask, name = o
         name = name.decode('utf-8')
         boxes_xy = boxes_xy.copy()
@@ -132,8 +133,11 @@ def main():
         cv2.imwrite(f"{outdir}/orig-annotated/{name}.jpg", img)
         p_boxes_xy, p_boxes_cl, p_boxes_sc = bbox_util.pred_to_boxes(p)
         file_name = f"{outdir}/pred-annotated/{name}.jpg"
-        annotate_detection(image, p_boxes_xy, p_boxes_cl, None,
-                           det_classes, file_name)
+        annotate_boxes(image, p_boxes_xy, p_boxes_cl, p_boxes_sc,
+                       det_classes, file_name)
+        # annotate segmentation
+        file_prefix = f"{outdir}/seg-annotated/{name}"
+        annotate_segmentation(image, mask, s, file_prefix)
     # runtime for inference
     runtime = timeit.timeit(lambda: model.predict(val_ds_batch), number=1)
     ds_size = 0

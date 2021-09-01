@@ -176,7 +176,7 @@ class BBoxUtils(object):
     NMS step is stored in the object.
     """
 
-    def __init__(self, n_classes, defaults_cwh,
+    def __init__(self, n_classes, default_boxes_cwh,
                  variances=(.1, .1, .2, .2), min_pos_iou=.05,
                  max_neg_iou=.03, min_area=0.00001, min_confidence=0.2,
                  iou_threshold=0.45, top_k=400):
@@ -188,21 +188,21 @@ class BBoxUtils(object):
             n_classes (int): Number of distinct classes.
             variances (np.ndarray[4]): Factors to scale the distortion.
             min_area (float): Minimum area of a box.
-            defaults_cwh (np.ndarray [n1, 4]): List of default boxes in c/w/h.
-            min_pos_iou (float): Minimum IoU value for mapping defaults
+            default_boxes_cwh (np.ndarray [n1, 4]): List of default boxes.
+            min_pos_iou (float): Minimum IoU value for mapping default boxes
                 not assigned as optimal.
             max_neg_iou (float): Maximum IoU value for mapping to background.
             min_area (float): Minimum area of a ground truth box to be used.
             min_confidence (float): Minimum confidence (score) required for
                 using a prediction.
             iou_threshold (float): Maximum IoU value for not discarding
-                defaults similar to the one with highest confidence.
+                default boxes similar to the one with highest confidence.
             top_k (float): Maximum number of default boxes to keep.
         """
         self.n_classes = n_classes
-        self.defaults_cwh = defaults_cwh
-        self.defaults_xy = to_xy(defaults_cwh)
-        self.n_defaults = defaults_cwh.shape[0]
+        self.default_boxes_cwh = default_boxes_cwh
+        self.default_boxes_xy = to_xy(default_boxes_cwh)
+        self.n_default_boxes = default_boxes_cwh.shape[0]
         self.variances = variances
         self.min_pos_iou = min_pos_iou
         self.max_neg_iou = max_neg_iou
@@ -211,124 +211,128 @@ class BBoxUtils(object):
         self.iou_threshold = iou_threshold
         self.top_k = top_k
 
-    def _one_box_encode_cwh(self, default_cwh, box_cwh):
-        """Calculate distortion needed for adjusting default to box.
+    def _one_box_encode_cwh(self, default_box_cwh, bbox_cwh):
+        """Calculate distortion needed for adjusting default to bounding box.
         This calculates the delta in x/y of the center, and the
         delta factor in extending/shrinking the width/height of
-        the default to match the box.
-        The delta in x/y is divided by the width/height of the default,
+        the default box to match the bounding box.
+        The delta in x/y is divided by the width/height of the default box,
         and the natural logarithm is taken from the factors.
         In addition they are all divided by the variances for scaling.
 
         Args:
-            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
-            box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
+            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
+            bbox_cwh (np.ndarray[4]): Box in cx/cy/w/h.
         Returns:
-            distortion (np.ndarray[4]): dx/dy of the center, fw/fh of the size,
+            distort (np.ndarray[4]): dx/dy of the center, fw/fh of the size,
                 scaled by width & variances, logarithmic for factor.
         """
-        # center: subtract, then scale by default width/height
-        c_delta = (box_cwh[0:2]-default_cwh[0:2]) / default_cwh[2:4]
+        # center: subtract, ...
+        c_delta = bbox_cwh[0:2]-default_box_cwh[0:2]
+        # ... then scale by default box width/height
+        c_delta = c_delta / default_box_cwh[2:4]
         # width/height: logarithm of quotient
-        wh_delta = np.log(box_cwh[2:4]/default_cwh[2:4])
+        wh_delta = np.log(bbox_cwh[2:4]/default_box_cwh[2:4])
         delta = np.concatenate((c_delta, wh_delta))
         return delta / self.variances
 
-    def _one_box_decode_cwh(self, default_cwh, distort):
-        """Calculate box back from distortion of default.
-        This calculates the box coordinates back from the distortion needed
-        to the default, by inverting the operations done in default_adjust.
+    def _one_box_decode_cwh(self, default_box_cwh, distort):
+        """Calculate bounding box back from distortion of default box.
+        This calculates the bounding box coordinates back from the distortion
+        needed to the default boz, by inverting the operations done in
+        `_one_box_encode_cwh`.
 
         Args:
-            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
+            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
             distort (np.ndarray[4]): Distortion as used in the network.
         Returns:
-            box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
+            bbox_cwh (np.ndarray[4]): Bounding box in cx/cy/w/h.
         """
         # reverse adjustment of default
         delta = distort * self.variances
-        d_xy = delta[0:2] * default_cwh[2:4]
-        f_wh = np.exp(delta[2:4]) * default_cwh[2:4]
+        d_xy = delta[0:2] * default_box_cwh[2:4]
+        f_wh = np.exp(delta[2:4]) * default_box_cwh[2:4]
         # get box cwh coordinates
-        box_cwh = np.concatenate((default_cwh[0:2]+d_xy, f_wh))
+        box_cwh = np.concatenate((default_box_cwh[0:2]+d_xy, f_wh))
         return box_cwh
 
-    def _one_row_gt_cwh(self, default_cwh, box_cwh, cls):
-        """Get one row of ground truth for an default, a box and a class.
+    def _one_row_gt_cwh(self, default_box_cwh, bbox_cwh, cls):
+        """Get one row of ground truth for a default, bounding box, and class.
 
         Args:
-            default_cwh (np.ndarray[4]): Anchor in cx/cy/w/h.
-            box_cwh (np.ndarray[4]): Box in cx/cy/w/h.
+            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
+            bbox_cwh (np.ndarray[4]): Bounding box in cx/cy/w/h.
             cls (int): Class of box, -1 if neutral.
         Returns:
             row_cwh (np.ndarray[n_classes+4]): Ground truth
-                row for the one box assigned to the one default.
+                row for the one bounding box assigned to the one default box.
                 It starts with the classes one-hot encoded and
                 ends with the bounding box adjustments.
         """
         if cls == -1:
             return np.zeros((self.n_classes+4))
         return np.concatenate((
-            self._one_box_encode_cwh(default_cwh, box_cwh),
+            self._one_box_encode_cwh(default_box_cwh, bbox_cwh),
             np.eye(self.n_classes)[cls],
             ))
 
     def boxes_decode_cwh(self, distorts):
-        """Calculate box back from distortion of default.
+        """Calculate bounding box back from distortion of default box.
         This calculates the box coordinates back from the distortion needed
-        to the default, by inverting the operations done in default_adjust.
+        to the default box, by inverting the operations done in
+        `_one_box_encode_cwh`.
 
         Args:
             distorts (np.ndarray[n, n2, 4]): Distortion as predicted.
         Returns:
-            boxes_cwh (np.ndarray[n, n2, 4]): Boxes in cx/cy/w/h.
+            bboxes_cwh (np.ndarray[n, n2, 4]): Bounding boxes.
         """
         # reverse adjustment of default
         delta = distorts * self.variances
-        d_xy = delta[..., 0:2] * self.defaults_cwh[..., 2:4]
-        f_wh = np.exp(delta[..., 2:4]) * self.defaults_cwh[..., 2:4]
+        d_xy = delta[..., 0:2] * self.default_boxes_cwh[..., 2:4]
+        f_wh = np.exp(delta[..., 2:4]) * self.default_boxes_cwh[..., 2:4]
         # get box cwh coordinates
-        boxes_cwh = np.concatenate(
-            (self.defaults_cwh[..., 0:2]+d_xy, f_wh),
+        bboxes_cwh = np.concatenate(
+            (self.default_boxes_cwh[..., 0:2]+d_xy, f_wh),
             axis=-1)
-        return boxes_cwh
+        return bboxes_cwh
 
-    def _skip_small_boxes_xy(self, boxes_xy, boxes_cl):
-        """Skip boxes where area is smaller than min_area.
+    def _skip_small_boxes_xy(self, bboxes_xy, boxes_cl):
+        """Skip bounding boxes where area is smaller than min_area.
 
         Args:
-            boxes_xy (np.ndarray [n, 4]): List of object boxes in x0/y0/x1/y1.
+            bboxes_xy (np.ndarray [n, 4]): List of bounding boxes.
             boxes_cl (np.ndarray [n]): List of classes per box.
         Returns:
-            boxes_xy (np.ndarray [n2, 4]): Bounding boxes above threshold.
+            bboxes_xy (np.ndarray [n2, 4]): Bounding boxes above threshold.
             boxes_cl (np.ndarray [n2]): Classes, without small boxes.
         """
         # calculate area
-        x0 = boxes_xy[..., 0]
-        y0 = boxes_xy[..., 1]
-        x1 = boxes_xy[..., 2]
-        y1 = boxes_xy[..., 3]
+        x0 = bboxes_xy[..., 0]
+        y0 = bboxes_xy[..., 1]
+        x1 = bboxes_xy[..., 2]
+        y1 = bboxes_xy[..., 3]
         area = (x1-x0) * (y1-y0)
         # get filter for classes and boxes
         above = (area > self.min_area) & (boxes_cl != 0)
         above_xy = above[..., np.newaxis]
         above_xy = np.repeat(above_xy, 4, -1)
         # filtered boxes & classes
-        shape_xy = (-1,) + boxes_xy.shape[1:]
+        shape_xy = (-1,) + bboxes_xy.shape[1:]
         shape_cl = (-1,) + boxes_cl.shape[1:]
-        filtered_xy = np.reshape(boxes_xy[above_xy], shape_xy)
+        filtered_xy = np.reshape(bboxes_xy[above_xy], shape_xy)
         filtered_cl = np.reshape(boxes_cl[above], shape_cl)
         # return filtered classes and boxes
         return filtered_xy, filtered_cl
 
-    def map_defaults_xy_orig(self, boxes_xy, boxes_cl):
-        """Find the default for each box with the most overlap.
+    def map_defaults_xy_orig(self, bboxes_xy, boxes_cl):
+        """Find the default box for each bounding box with the most overlap.
         First each box is mapped with the default of highest match,
         such that each default is used only once.
         The remaining defaults are mapped to the box with highest IoU,
         as long as the IoU is at least min_pos_iou.
-        The remaing defaults are mapped to background if the largest IoU is less
-        than max_neg_iou; otherwise they are marked as neutral.
+        The remaing default boxes are mapped to background if the largest IoU
+        is less than max_neg_iou; otherwise they are marked as neutral.
 
         Args:
             boxes_xy (np.ndarray [n2, 4]): Array of object boxes corners.
@@ -340,81 +344,81 @@ class BBoxUtils(object):
                 default to the ground truth bounding box.
         """
         # only one box provided?
-        if boxes_xy.ndim == 1:
-            boxes_xy = np.expand_dims(boxes_xy, 0)
-        boxes_xy, boxes_cl = self._skip_small_boxes_xy(boxes_xy, boxes_cl)
+        if bboxes_xy.ndim == 1:
+            bboxes_xy = np.expand_dims(bboxes_xy, 0)
+        bboxes_xy, boxes_cl = self._skip_small_boxes_xy(bboxes_xy, boxes_cl)
         # initialize n1, n2
-        n1 = self.n_defaults
-        n2 = boxes_xy.shape[0]
+        n1 = self.n_default_boxes
+        n2 = bboxes_xy.shape[0]
         # assignment of default to box - ground truth
         gt = np.zeros((n1, self.n_classes+4))
         # no box left after skipping small ones? return as-is
         if n2 == 0:
             return gt
         # calculate iou values for all defaults and all boxes
-        iou_vals = iou_xy(self.defaults_xy, boxes_xy, pairwise=False)
+        iou_vals = iou_xy(self.default_boxes_xy, bboxes_xy, pairwise=False)
         # loop for each box (or defaults if less):
         for _ in range(min(n1, n2)):
             # highest default IoU per box
-            max_defaults = np.argmax(iou_vals, axis=0)
-            max_iou = iou_vals[max_defaults, range(n2)]
+            max_default_boxes = np.argmax(iou_vals, axis=0)
+            max_iou = iou_vals[max_default_boxes, range(n2)]
             mapped_box = np.argmax(max_iou)
-            mapped_default = max_defaults[mapped_box]
+            mapped_default = max_default_boxes[mapped_box]
             # add pair to list
             gt[mapped_default] = self._one_row_gt_cwh(
-                self.defaults_cwh[mapped_default],
-                to_cwh(boxes_xy[mapped_box]),
+                self.default_boxes_cwh[mapped_default],
+                to_cwh(bboxes_xy[mapped_box]),
                 boxes_cl[mapped_box])
             # take default out from next rounds
             iou_vals[mapped_default, :] = 0.
         # remaining defaults: get maximum ground truth
         # highest box IoU per default
-        max_boxes = np.argmax(iou_vals, axis=1)
-        max_iou = iou_vals[range(n1), max_boxes]
-        for default in range(n1):
+        max_bboxes = np.argmax(iou_vals, axis=1)
+        max_iou = iou_vals[range(n1), max_bboxes]
+        for default_box in range(n1):
             # is the maximum IoU above the positive-threshold?
-            if max_iou[default] > self.min_pos_iou:
-                gt[default] = self._one_row_gt_cwh(
-                    self.defaults_cwh[default],
-                    to_cwh(boxes_xy[max_boxes[default]]),
-                    boxes_cl[max_boxes[default]]
+            if max_iou[default_box] > self.min_pos_iou:
+                gt[default_box] = self._one_row_gt_cwh(
+                    self.default_boxes_cwh[default_box],
+                    to_cwh(bboxes_xy[max_bboxes[default_box]]),
+                    boxes_cl[max_bboxes[default_box]]
                 )
             # alternatively is it above the negative-threshold?
-            elif max_iou[default] > self.max_neg_iou:
+            elif max_iou[default_box] > self.max_neg_iou:
                 # then add it as "neutral"
-                gt[default] = self._one_row_gt_cwh(
-                    self.defaults_cwh[default],
-                    to_cwh(boxes_xy[max_boxes[default]]),
+                gt[default_box] = self._one_row_gt_cwh(
+                    self.defaults_cwh[default_box],
+                    to_cwh(bboxes_xy[max_bboxes[default_box]]),
                     -1
                 )
         return gt
 
-    def map_defaults_xy(self, boxes_xy, boxes_cl):
-        """Find the default for each box with the most overlap.
-        First each box is mapped with the default of highest match,
-        such that each default is used only once.
-        The remaining defaults are mapped to the box with highest IoU,
-        as long as the IoU is at least min_pos_iou.
-        The remaing defaults are mapped to background if the largest IoU is less
-        than max_neg_iou; otherwise they are marked as neutral.
+    def map_defaults_xy(self, bboxes_xy, boxes_cl):
+        """Assign default boxes for provided bounding boxes.
+        First each bounding box is mapped to the default box of highest match,
+        such that each default box is used only once.
+        The remaining default boxes are mapped to the bounding box with
+        highest IoU, as long as the IoU is at least min_pos_iou.
+        The remaing default boxes are mapped to background if the largest IoU
+        is less than max_neg_iou; otherwise they are marked as neutral.
 
         Args:
-            boxes_xy (np.ndarray [n2, 4]): Array of object boxes corners.
+            bboxes_xy (np.ndarray [n2, 4]): Array of bounding boxes corners.
             boxes_cl (np.ndarray [n2, 1]): Array of classes per box.
         Returns:
             gt (np.ndarray, [n1, n_classes+4]): The encoded ground truth,
-                where each default is assigned a class (one-hot-encoded) or
+                where each default box is assigned a class (one-hot-encoded) or
                 to no class for "neutral", and a distortion to adjust the
-                default to the ground truth bounding box.
+                default box to the ground truth bounding box.
         """
         # only one box provided?
-        if boxes_xy.ndim == 1:
-            boxes_xy = np.expand_dims(boxes_xy, 0)
-        boxes_xy, boxes_cl = self._skip_small_boxes_xy(boxes_xy, boxes_cl)
-        boxes_cwh = to_cwh(boxes_xy)
+        if bboxes_xy.ndim == 1:
+            bboxes_xy = np.expand_dims(bboxes_xy, 0)
+        bboxes_xy, boxes_cl = self._skip_small_boxes_xy(bboxes_xy, boxes_cl)
+        bboxes_cwh = to_cwh(bboxes_xy)
         # initialize n1, n2
-        n1 = self.n_defaults
-        n2 = boxes_xy.shape[0]
+        n1 = self.n_default_boxes
+        n2 = bboxes_xy.shape[0]
         # ground truth tensor for training
         gt = np.zeros((n1, self.n_classes+4))
         # initialize as "all background" (pos 4 = class 0)
@@ -423,33 +427,33 @@ class BBoxUtils(object):
         if n2 == 0:
             return gt
         # calculate IoU values for all defaults and all boxes
-        iou_vals = iou_xy(self.defaults_xy, boxes_xy, pairwise=False)
+        iou_vals = iou_xy(self.default_boxes_xy, bboxes_xy, pairwise=False)
         # step 1: map each box to the default with highest IoU
-        main_box_defaults = np.argmax(iou_vals, axis=0)
+        main_box_default_box = np.argmax(iou_vals, axis=0)
         # removing the selected defaults (setting their IoU to 0)
         # from further mapping
-        iou_vals[main_box_defaults, :] = 0.
+        iou_vals[main_box_default_box, :] = 0.
         # add defaults to ground truth
-        for box, default in enumerate(main_box_defaults):
-            gt[default] = self._one_row_gt_cwh(
-                self.defaults_cwh[default],
-                boxes_cwh[box],
-                boxes_cl[box])
+        for bbox, default_box in enumerate(main_box_default_box):
+            gt[default_box] = self._one_row_gt_cwh(
+                self.default_boxes_cwh[default_box],
+                bboxes_cwh[bbox],
+                boxes_cl[bbox])
         # step 2: find for each default the box with maximum IoU
         aux_default_boxes = np.argmax(iou_vals, axis=1)
         # do they satisfy the thresholds?
-        for default, box in enumerate(aux_default_boxes):
-            if iou_vals[default, box] > self.min_pos_iou:
+        for default_box, bbox in enumerate(aux_default_boxes):
+            if iou_vals[default_box, bbox] > self.min_pos_iou:
                 # add them to ground truth
-                gt[default] = self._one_row_gt_cwh(
-                    self.defaults_cwh[default],
-                    boxes_cwh[box],
-                    boxes_cl[box])
-            elif iou_vals[default, box] > self.max_neg_iou:
+                gt[default_box] = self._one_row_gt_cwh(
+                    self.default_boxes_cwh[default_box],
+                    bboxes_cwh[bbox],
+                    boxes_cl[bbox])
+            elif iou_vals[default_box, bbox] > self.max_neg_iou:
                 # add them as neutral, i.e. class = -1
-                gt[default] = self._one_row_gt_cwh(
-                    self.defaults_cwh[default],
-                    boxes_cwh[box],
+                gt[default_box] = self._one_row_gt_cwh(
+                    self.default_boxes_cwh[default_box],
+                    bboxes_cwh[bbox],
                     -1)
         return gt
 

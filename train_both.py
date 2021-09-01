@@ -5,6 +5,7 @@ import argparse
 import tensorflow.keras.optimizers as optimizers
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope, plot_model
+from tensorflow.keras.callbacks import CSVLogger
 
 from lib.deeplab import add_deeplab_features
 from lib.np_bbox_utils import BBoxUtils
@@ -102,6 +103,11 @@ def main():
         help='Number of epochs.',
         required=True
     )
+    parser.add_argument(
+        '--logs',
+        type=str,
+        help='Folder for storing training logs'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     plot_keras = args.plot_keras
@@ -109,6 +115,9 @@ def main():
     in_model = args.in_model
     out_model = args.out_model
     num_epochs = args.epochs
+    logs = args.logs
+    if logs and not os.path.exists(logs):
+        os.makedirs(logs)
 
     # build model
     models = ssd_deeplab_model((300, 300), 11, 11)
@@ -176,8 +185,18 @@ def main():
         with custom_object_scope({'SSDLoss': SSDLoss}):
             model = tf.keras.models.load_model(in_model)
 
+    # prepare callbacks
+    callbacks = []
+    if logs:
+        callbacks.append(
+            CSVLogger(logs + '/history.csv', append=True, separator=';'))
+
     # perform training
-    model.fit(train_ds_batch, epochs=num_epochs, validation_data=val_ds_batch)
+    model.fit(
+        train_ds_batch,
+        epochs=num_epochs,
+        validation_data=val_ds_batch,
+        callbacks=callbacks)
 
     # save resulting model
     model.save(out_model)

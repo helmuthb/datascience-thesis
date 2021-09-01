@@ -5,6 +5,7 @@ Preprocessing of images for SSD.
 """
 
 import tensorflow as tf
+from typing import Tuple
 
 from .np_bbox_utils import BBoxUtils
 
@@ -19,7 +20,7 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def preprocess_det(size: tuple[int], bbox_util: BBoxUtils):
+def preprocess_det(size: Tuple[int], bbox_util: BBoxUtils):
     """Get preprocessing function for object detection.
 
     The resulting function will expect image, and optionally
@@ -90,7 +91,7 @@ def preprocess_seg(size, num_classes):
     return _preprocess_wrap
 
 
-def preprocess(size: tuple[int], bbox_utils: BBoxUtils, n_seg: int):
+def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
     """Preprocess image: resize, scale, filter small boxes.
 
         Args:

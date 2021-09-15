@@ -15,7 +15,7 @@ from lib.ssdlite import (
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
-from lib.losses import SSDLoss
+from lib.losses import SSDLoss, SSDLosses
 
 
 def print_model(model, name, out_folder):
@@ -149,7 +149,7 @@ def main():
     losses = {
         "deeplab_output":
             tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        "ssd_output": SSDLoss(11),
+        "ssd_output": SSDLosses(11, "combined"),
     }
     # loss weights
     lossWeights = {
@@ -162,6 +162,15 @@ def main():
         loss=losses,
         loss_weights=lossWeights,
         run_eagerly=False,
+        metrics={
+            "deeplab_output": tf.keras.losses.SparseCategoricalCrossentropy(
+                from_logits=True),
+            "ssd_output": {
+                "neg_cls_loss": SSDLosses(11, "neg_cls_loss"),
+                "pos_cls_loss": SSDLosses(11, "pos_cls_loss"),
+                "pos_loc_loss": SSDLosses(11, "pos_loc_loss")
+            }
+        }
     )
 
     # Load training & validation data

@@ -15,7 +15,7 @@ from lib.ssdlite import (
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
-from lib.losses import SSDLoss, SSDLosses
+from lib.losses import SSDLosses
 
 
 def print_model(model, name, out_folder):

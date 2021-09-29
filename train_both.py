@@ -6,16 +6,18 @@ import tensorflow.keras.optimizers as optimizers
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope, plot_model
 from tensorflow.keras.callbacks import CSVLogger
+from lib.augment import Augment
 
 from lib.deeplab import add_deeplab_features
 from lib.np_bbox_utils import BBoxUtils
-from lib.preprocess import preprocess
+from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
 from lib.ssdlite import (
     add_ssdlite_features, detection_head, get_default_boxes_cwh,
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
-from lib.losses import SSDLosses
+from lib.losses import SSDLoss, DeeplabLoss
+import lib.rs19_classes as rs19
 
 
 def print_model(model, name, out_folder):
@@ -36,7 +38,7 @@ def print_model(model, name, out_folder):
     plot_model(model, to_file=plot_file)
 
 
-def ssd_deeplab_model(size, n_seg, n_det):
+def ssd_deeplab_model(size, n_det, n_seg):
     """
     """
     input_layer = tf.keras.layers.Input(
@@ -119,12 +121,16 @@ def main():
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
+    # number of classes
+    n_seg = len(rs19.seg_subset)
+    n_det = len(rs19.det_subset)
+
     # build model
-    models = ssd_deeplab_model((300, 300), 11, 11)
+    models = ssd_deeplab_model((300, 300), n_det, n_seg)
     model, default_boxes_cwh, base, deeplab, ssd = models
 
     # Bounding box utility object
-    bbox_util = BBoxUtils(11, default_boxes_cwh)
+    bbox_util = BBoxUtils(n_det, default_boxes_cwh)
 
     if plot_dir:
         if not os.path.exists(plot_dir):
@@ -140,16 +146,15 @@ def main():
                 input_shape=(300, 300, 3),
                 include_top=False,
                 weights=None,
-                classes=11
+                classes=n_det
             )
             # describe model
             print_model(mnet_keras, 'keras', plot_dir)
 
     # Loss functions
     losses = {
-        "deeplab_output":
-            tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        "ssd_output": SSDLosses(11, "combined"),
+        "deeplab_output": DeeplabLoss(),
+        "ssd_output": SSDLoss(n_det),
     }
     # loss weights
     lossWeights = {
@@ -163,12 +168,11 @@ def main():
         loss_weights=lossWeights,
         run_eagerly=False,
         metrics={
-            "deeplab_output": tf.keras.losses.SparseCategoricalCrossentropy(
-                from_logits=True),
+            "deeplab_output": DeeplabLoss(),
             "ssd_output": {
-                "neg_cls_loss": SSDLosses(11, "neg_cls_loss"),
-                "pos_cls_loss": SSDLosses(11, "pos_cls_loss"),
-                "pos_loc_loss": SSDLosses(11, "pos_loc_loss")
+                "neg_cls_loss": SSDLoss(n_det, "neg_cls_loss"),
+                "pos_cls_loss": SSDLoss(n_det, "pos_cls_loss"),
+                "pos_loc_loss": SSDLoss(n_det, "pos_loc_loss")
             }
         }
     )
@@ -179,11 +183,53 @@ def main():
     val_ds_orig = read_tfrecords(
             os.path.join(tfrecdir, 'val.tfrec'))
 
+    # train_ds_np = tfds.as_numpy(train_ds_orig)
+    # train_ds_np = [x for x in train_ds_orig.as_numpy_iterator()]
+    # Augment data
+    augment = Augment(1080, 1920)
+    augment.crop_and_pad()
+    augment.horizontal_flip()
+    augment.hsv()
+    augment.random_brightness_contrast()
+
+    # generator with augmentation
+    def train_aug_gen():
+        """Get augmented data from training data.
+        """
+        for e in train_ds_orig.as_numpy_iterator():
+            yield(augment(*e))
+
+    print(train_ds_orig.element_spec)
+    train_ds_aug = tf.data.Dataset.from_generator(
+        train_aug_gen,
+        output_signature=(
+            tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
+            tf.TensorSpec(shape=(None, 4), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.int64),
+            tf.TensorSpec(shape=(None, None, 1), dtype=tf.uint8),
+            tf.TensorSpec(shape=(), dtype=tf.string)
+        )
+    )
+
+    # Filter for classes of interest
+    train_ds_filtered_det = train_ds_aug.map(
+        filter_classes_bbox(rs19.det_classes, rs19.det_subset)
+    )
+    val_ds_filtered_det = val_ds_orig.map(
+        filter_classes_bbox(rs19.det_classes, rs19.det_subset)
+    )
+    train_ds_filtered = train_ds_filtered_det.map(
+        filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
+    )
+    val_ds_filtered = val_ds_filtered_det.map(
+        filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
+    )
+
     # Preprocess data
-    train_ds = train_ds_orig.map(
-        preprocess((300, 300), bbox_util, 11))
-    val_ds = val_ds_orig.map(
-        preprocess((300, 300), bbox_util, 11))
+    train_ds = train_ds_filtered.map(
+        preprocess((300, 300), bbox_util, n_seg))
+    val_ds = val_ds_filtered.map(
+        preprocess((300, 300), bbox_util, n_seg))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=8)
@@ -191,7 +237,10 @@ def main():
 
     # load model if fine tuning
     if in_model:
-        with custom_object_scope({'SSDLoss': SSDLoss}):
+        with custom_object_scope({
+                    'SSDLoss': SSDLoss,
+                    'DeeplabLoss': DeeplabLoss
+                }):
             model = tf.keras.models.load_model(in_model)
 
     # prepare callbacks

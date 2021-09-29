@@ -8,22 +8,16 @@ from tensorflow.keras.utils import custom_object_scope
 import cv2
 import numpy as np
 
-from lib.preprocess import preprocess
+from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
 from lib.np_bbox_utils import BBoxUtils
 from lib.ssdlite import (
     add_ssdlite_features, get_default_boxes_cwh,
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
 from lib.mobilenet import mobilenetv2
-from lib.losses import SSDLoss
+from lib.losses import SSDLoss, DeeplabLoss
 from lib.visualize import annotate_boxes, annotate_segmentation
-
-
-# Names of classes used in object detection
-det_classes = ["background", "buffer-stop", "crossing", "switch-indicator",
-               "switch-left", "switch-right", "switch-static",
-               "switch-unknown", "track-signal-back", "track-signal-front",
-               "track-sign-front"]
+import lib.rs19_classes as rs19
 
 
 def ssd_defaults(size):
@@ -68,19 +62,31 @@ def main():
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/seg-annotated", exist_ok=True)
 
+    # number of classes
+    n_seg = len(rs19.seg_subset)
+    n_det = len(rs19.det_subset)
+
     # get default boxes
     default_boxes_cwh = ssd_defaults((300, 300))
 
     # Bounding box utility object
-    bbox_util = BBoxUtils(11, default_boxes_cwh, min_confidence=0.01)
+    bbox_util = BBoxUtils(n_det, default_boxes_cwh, min_confidence=0.01)
 
     # Load validation data
     val_ds_orig = read_tfrecords(
             os.path.join(args.tfrecords, 'val.tfrec'))
 
+    # Filter for classes of interest
+    val_ds_filtered_det = val_ds_orig.map(
+        filter_classes_bbox(rs19.det_classes, rs19.det_subset)
+    )
+    val_ds_filtered = val_ds_filtered_det.map(
+        filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
+    )
+
     # Preprocess data
-    val_ds = val_ds_orig.map(
-        preprocess((300, 300), bbox_util, 11))
+    val_ds = val_ds_filtered.map(
+        preprocess((300, 300), bbox_util, n_seg))
 
     # find for each validation sample the highest class
     for sample in val_ds:
@@ -89,15 +95,16 @@ def main():
         max_c = defaultdict(int)
         for b in range(num_boxes):
             c = np.argmax(boxes[b, :-4])
-            # print(boxes[b, :-4])
             max_c[c] += 1
-        # print(max_c)
 
     # Create batches
     val_ds_batch = val_ds.batch(batch_size=8)
 
     # load model
-    with custom_object_scope({'SSDLoss': SSDLoss}):
+    with custom_object_scope({
+                'SSDLoss': SSDLoss,
+                'DeeplabLoss': DeeplabLoss
+            }):
         model = tf.keras.models.load_model(args.model)
 
     # perform inference on validation set
@@ -134,7 +141,7 @@ def main():
         p_boxes_xy, p_boxes_cl, p_boxes_sc = bbox_util.pred_to_boxes(p)
         file_name = f"{outdir}/pred-annotated/{name}.jpg"
         annotate_boxes(image, p_boxes_xy, p_boxes_cl, p_boxes_sc,
-                       det_classes, file_name)
+                       rs19.det_subset, file_name)
         # annotate segmentation
         file_prefix = f"{outdir}/seg-annotated/{name}"
         annotate_segmentation(image, mask, s, file_prefix)

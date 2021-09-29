@@ -7,7 +7,9 @@ implemented here.
 """
 
 import tensorflow as tf
-from tensorflow.keras.losses import Loss, Reduction
+from tensorflow.keras.losses import (
+    Loss, Reduction, sparse_categorical_crossentropy
+)
 
 from lib.np_bbox_utils import boxes_classes
 
@@ -58,26 +60,34 @@ def softmax_loss(labels, preds):
     return -1. * tf.reduce_sum(entropy_parts, axis=-1)
 
 
-class SSDLosses(Loss):
-    """SSD Losses used for training or validation batch.
-    It returns a dict for the losses, which are (usually) added
-    together for getting the regular SSD loss.
+class SSDLoss(Loss):
+    """SSD Loss used for training or validation batch.
+    Through the parameter `key` one can select only part of the combined loss.
     """
-    def __init__(self, num_classes, key='combined', reduction=Reduction.AUTO,
-                 name_prefix='ssd_loss_'):
-        super(SSDLosses, self).__init__(
-            reduction=reduction, name=name_prefix + key)
+    def __init__(self, num_classes, key='combined',
+                 reduction=Reduction.AUTO,
+                 name_prefix='ssd_loss_',
+                 name=None,
+                 **kwargs):
+        if name is None:
+            name = name_prefix + key
+        super(SSDLoss, self).__init__(
+            reduction=reduction,
+            name=name,
+            **kwargs)
         self.num_classes = num_classes
         self.key = key
 
     def get_config(self):
-        config = super(SSDLosses, self).get_config()
+        config = super(SSDLoss, self).get_config()
         config['num_classes'] = self.num_classes
         config['key'] = self.key
+        # delete "reduction" from config
+        # del config['reduction']
         return config
 
     def call(self, labels, logits):
-        """"Calculate the losses from the predicted logits.
+        """"Calculate the SSD losses from the predicted logits.
         The structure of the data (logits and labels) consists of four
         (predicted or real) adjustments (data[:, :, :4]),
         and N (number of classes) logits.
@@ -90,10 +100,6 @@ class SSDLosses(Loss):
             labels=labels_cls,
             logits=logits_cls,
         )
-        # calculate softmax of logits
-        # y_pred_cls = tf.nn.softmax(logits_cls)
-        # classification loss: using softmax loss
-        # cls_loss = softmax_loss(labels[:, :, :-4], y_pred[:, :, :-4])
         # localization loss: using smooth L1 loss
         loc_loss = smooth_l1(labels_box, logits_box)
         # which true items are negative (i.e. "background" class)?
@@ -123,7 +129,8 @@ class SSDLosses(Loss):
         def zero_loss():
             return tf.zeros([tf.shape(labels)[0]])
 
-        neg_cls_loss = tf.cond(tf.equal(n_neg, 0), zero_loss, neg_loss)
+        # neg_cls_loss = tf.cond(tf.equal(n_neg, 0), zero_loss, neg_loss)
+        neg_cls_loss = neg_loss()
         # now the positive loss sum - location and classification
         pos_loc_loss = tf.reduce_sum(loc_loss * y_pos, axis=-1)
         pos_cls_loss = tf.reduce_sum(cls_loss * y_pos, axis=-1)
@@ -138,3 +145,23 @@ class SSDLosses(Loss):
             "combined": (neg_cls_loss + pos_cls_loss + pos_loc_loss) * f
         }
         return losses[self.key]
+
+
+class DeeplabLoss(Loss):
+    """DeepLab Loss used for training or validation batch.
+    """
+    def __init__(self, name='deeplab_loss', **kwargs):
+        super(DeeplabLoss, self).__init__(
+            name=name,
+            **kwargs)
+
+    def get_config(self):
+        config = super(DeeplabLoss, self).get_config()
+        return config
+
+    def call(self, labels, logits):
+        """"Calculate the DeepLab loss from the predicted logits.
+        """
+        return sparse_categorical_crossentropy(
+            labels, logits, from_logits=True
+        )

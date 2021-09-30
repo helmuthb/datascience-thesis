@@ -110,6 +110,11 @@ def main():
         type=str,
         help='Folder for storing training logs'
     )
+    parser.add_argument(
+        '--augment',
+        action='store_true',
+        help='Perform augmentation.'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     plot_keras = args.plot_keras
@@ -118,6 +123,7 @@ def main():
     out_model = args.out_model
     num_epochs = args.epochs
     logs = args.logs
+    augment = args.augment
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
@@ -183,33 +189,33 @@ def main():
     val_ds_orig = read_tfrecords(
             os.path.join(tfrecdir, 'val.tfrec'))
 
-    # train_ds_np = tfds.as_numpy(train_ds_orig)
-    # train_ds_np = [x for x in train_ds_orig.as_numpy_iterator()]
     # Augment data
-    augment = Augment(1080, 1920)
-    augment.crop_and_pad()
-    augment.horizontal_flip()
-    augment.hsv()
-    augment.random_brightness_contrast()
+    augmentor = Augment(1080, 1920)
+    augmentor.crop_and_pad()
+    augmentor.horizontal_flip()
+    augmentor.hsv()
+    augmentor.random_brightness_contrast()
 
     # generator with augmentation
     def train_aug_gen():
         """Get augmented data from training data.
         """
         for e in train_ds_orig.as_numpy_iterator():
-            yield(augment(*e))
+            yield(augmentor(*e))
 
-    print(train_ds_orig.element_spec)
-    train_ds_aug = tf.data.Dataset.from_generator(
-        train_aug_gen,
-        output_signature=(
-            tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
-            tf.TensorSpec(shape=(None, 4), dtype=tf.float32),
-            tf.TensorSpec(shape=(None,), dtype=tf.int64),
-            tf.TensorSpec(shape=(None, None, 1), dtype=tf.uint8),
-            tf.TensorSpec(shape=(), dtype=tf.string)
+    if augment:
+        train_ds_aug = tf.data.Dataset.from_generator(
+            train_aug_gen,
+            output_signature=(
+                tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
+                tf.TensorSpec(shape=(None, 4), dtype=tf.float32),
+                tf.TensorSpec(shape=(None,), dtype=tf.int64),
+                tf.TensorSpec(shape=(None, None, 1), dtype=tf.uint8),
+                tf.TensorSpec(shape=(), dtype=tf.string)
+            )
         )
-    )
+    else:
+        train_ds_aug = train_ds_orig
 
     # Filter for classes of interest
     train_ds_filtered_det = train_ds_aug.map(

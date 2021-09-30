@@ -12,8 +12,19 @@ seg_classes = ["road", "sidewalk", "construction", "tram-track",
                "rail-embedded"]
 
 # subset of interest: object detection
-det_subset = ["background", "track-signal-back", "track-signal-front",
-              "track-sign-front"]
+det_subset = [
+        ["background"],
+        ["switch", "switch-left", "switch-right", "switch-static",
+         "switch-unknown"],
+        ["signal-sign", "track-signal-front", "track-signal-back",
+         "track-sign-front"]
+    ]
 
 # subset of interest: segmentation
-seg_subset = ["road", "rail-raised", "rail-embedded"]
+seg_subset = [
+        ["road"],
+        ["sign", "traffic-light", "traffic-sign"],
+        ["rail", "tram-track", "rail-track", "rail-raised", "rail-embedded",
+         "trackbed"],
+        ["object", "human", "car", "truck", "on-rails"]
+    ]

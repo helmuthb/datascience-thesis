@@ -8,7 +8,8 @@ from tensorflow.keras.utils import custom_object_scope
 import cv2
 import numpy as np
 
-from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
+from lib.preprocess import (
+    preprocess, filter_classes_bbox, filter_classes_mask, subset_names)
 from lib.np_bbox_utils import BBoxUtils
 from lib.ssdlite import (
     add_ssdlite_features, get_default_boxes_cwh,
@@ -65,6 +66,9 @@ def main():
     # number of classes
     n_seg = len(rs19.seg_subset)
     n_det = len(rs19.det_subset)
+
+    # names of detection subsets
+    det_names = subset_names(rs19.det_subset)
 
     # get default boxes
     default_boxes_cwh = ssd_defaults((300, 300))
@@ -141,7 +145,7 @@ def main():
         p_boxes_xy, p_boxes_cl, p_boxes_sc = bbox_util.pred_to_boxes(p)
         file_name = f"{outdir}/pred-annotated/{name}.jpg"
         annotate_boxes(image, p_boxes_xy, p_boxes_cl, p_boxes_sc,
-                       rs19.det_subset, file_name)
+                       det_names, file_name)
         # annotate segmentation
         file_prefix = f"{outdir}/seg-annotated/{name}"
         annotate_segmentation(image, mask, s, file_prefix)

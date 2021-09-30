@@ -82,8 +82,6 @@ class SSDLoss(Loss):
         config = super(SSDLoss, self).get_config()
         config['num_classes'] = self.num_classes
         config['key'] = self.key
-        # delete "reduction" from config
-        # del config['reduction']
         return config
 
     def call(self, labels, logits):
@@ -105,8 +103,9 @@ class SSDLoss(Loss):
         # which true items are negative (i.e. "background" class)?
         y_neg = labels_cls[:, :, 0]
         # which true items are positive (i.e. a class != background)?
-        y_pos = tf.reduce_sum(labels_cls[:, :, 1:], axis=-1)
-        # number of positives & negatives in the batch
+        y_pos = tf.reduce_sum(labels_cls[:, :, 1:], axis=2)
+        # number of positives & negatives in the batch & per-sample
+        n_pos_samples = tf.reduce_sum(y_pos, axis=1)
         n_pos = tf.reduce_sum(y_pos)
         n_neg = tf.cast(tf.math.count_nonzero(y_neg*cls_loss), tf.float32)
         # how many negatives to "hard mine"?
@@ -127,13 +126,17 @@ class SSDLoss(Loss):
             return tf.reduce_sum(cls_loss * mask, axis=-1)
 
         def zero_loss():
-            return tf.zeros([tf.shape(labels)[0]])
+            # return tf.zeros([tf.shape(labels)[0]])
+            # n_samples = tf.shape(labels)[0]
+            # return tf.zeros((n_samples,))
+            return tf.zeros(tf.shape(n_pos_samples))
+            # return 0
 
-        # neg_cls_loss = tf.cond(tf.equal(n_neg, 0), zero_loss, neg_loss)
-        neg_cls_loss = neg_loss()
+        neg_cls_loss = tf.cond(tf.equal(n_neg, 0), zero_loss, neg_loss)
+        # neg_cls_loss = neg_loss()
         # now the positive loss sum - location and classification
-        pos_loc_loss = tf.reduce_sum(loc_loss * y_pos, axis=-1)
-        pos_cls_loss = tf.reduce_sum(cls_loss * y_pos, axis=-1)
+        pos_loc_loss = tf.reduce_sum(loc_loss * y_pos, axis=1)
+        pos_cls_loss = tf.reduce_sum(cls_loss * y_pos, axis=1)
         # scaling factor: relative to the number of positive boxes,
         # and multiplied by batch size
         f = tf.cast(tf.shape(labels)[0], tf.float32) / tf.maximum(1., n_pos)

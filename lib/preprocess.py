@@ -21,18 +21,40 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def filter_classes_bbox(classes: List[str], subset: List[str]):
+def subset_names(subset: List[List]) -> List[str]:
+    """Get the names of the subset of classes.
+    """
+    return [s[0] for s in subset]
+
+
+def class_indices(classes: List[str], subset: List[List]) -> List[int]:
+    """Get the indices of the classes in the subset.
+    """
+    indices = []
+    for c in classes:
+        # default index for each class - 0 = background
+        idx = 0
+        for i, s in enumerate(subset):
+            if c in s:
+                idx = i
+                # do not search in further subsets
+                break
+        # Append index to list of indices
+        indices.append(idx)
+    return indices
+
+
+def filter_classes_bbox(classes: List[str], subset: List[List]):
     """Filter bounding boxes to be only for a specific set of classes.
 
     Args:
         classes (list(str)): List of classes as in the data set.
-        subset (list(str)): List of classes to be used.
+        subset (list(list)): List of list of classes.
     """
-    # make sure that subset[0] == classes[0]
-    if classes[0] != subset[0]:
-        raise ValueError(f"Background '{classes[0]}' must be first in subset")
-    # get indices of subclasses used
-    indices = [classes.index(c) for c in subset]
+    indices = class_indices(classes, subset)
+    # make sure that 0 maps to 0
+    if indices[0] != 0:
+        raise ValueError(f"Background '{classes[0]}' must map to 0")
 
     def _do_filter(boxes_xy, boxes_cl):
         # to numpy for boxes and classes
@@ -42,10 +64,11 @@ def filter_classes_bbox(classes: List[str], subset: List[str]):
         ret_xy = []
         ret_cl = []
         # find classes in the list of indices
-        for i, c in enumerate(boxes_cl):
-            if c in indices:
-                ret_xy.append(boxes_xy[i])
-                ret_cl.append(indices.index(c))
+        for c, box in zip(boxes_cl, boxes_xy):
+            i = indices[c] if 0 <= c < len(indices) else 0
+            if i != 0:
+                ret_xy.append(box)
+                ret_cl.append(i)
         # is the list empty?
         if len(ret_cl) == 0:
             ret_xy.append([0., 0., 1., 1.])
@@ -70,26 +93,19 @@ def filter_classes_mask(classes: List[str], subset: List[str]):
         classes (list(str)): List of classes as in the data set.
         subset (list(str)): List of classes to be used.
     """
-    # make sure that subset[0] == classes[0]
-    if classes[0] != subset[0]:
-        raise ValueError(f"Background '{classes[0]}' must be first in subset")
-    # get indices of subclasses used
-    indices = [classes.index(c) for c in subset]
-    # create mapping list
-    translate = []
-    for c in classes:
-        if c in indices:
-            translate.append(indices.index(c))
-        else:
-            # treat as background
-            translate.append(0)
+    indices = class_indices(classes, subset)
+    # make sure that 0 maps to 0
+    if indices[0] != 0:
+        raise ValueError(f"Background '{classes[0]}' must map to 0")
+
+    def _translate(i: int) -> int:
+        return indices[i] if 0 <= i < len(indices) else 0
 
     def _do_filter(mask):
         # to numpy for mask
         mask = mask.numpy()
         # vectorized function for mapping
-        max_i = len(translate)
-        np_translate = np.vectorize(lambda i: translate[i] if i < max_i else 0)
+        np_translate = np.vectorize(_translate)
         # apply on mask
         return np_translate(mask)
 

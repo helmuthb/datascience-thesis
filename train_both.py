@@ -115,6 +115,29 @@ def main():
         action='store_true',
         help='Perform augmentation.'
     )
+    parser.add_argument(
+        '--ssd-weight',
+        type=float,
+        default=1.0,
+        help='Weight for SSD training (default = 1.0).'
+    )
+    parser.add_argument(
+        '--deeplab-weight',
+        type=float,
+        default=1.0,
+        help='Weight for DeepLab training (default = 1.0).'
+    )
+    parser.add_argument(
+        '--batches-per-epoch',
+        type=int,
+        help='Number of batches per epoch (default = full dataset).'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=8,
+        help='Number of samples per batch (default=8).'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     plot_keras = args.plot_keras
@@ -124,6 +147,10 @@ def main():
     num_epochs = args.epochs
     logs = args.logs
     augment = args.augment
+    ssd_weight = args.ssd_weight
+    deeplab_weight = args.deeplab_weight
+    batches_per_epoch = args.batches_per_epoch
+    batch_size = args.batch_size
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
@@ -134,6 +161,14 @@ def main():
     # build model
     models = ssd_deeplab_model((300, 300), n_det, n_seg)
     model, default_boxes_cwh, base, deeplab, ssd = models
+
+    # load model if fine tuning
+    if in_model:
+        with custom_object_scope({
+                    'SSDLoss': SSDLoss,
+                    'DeeplabLoss': DeeplabLoss
+                }):
+            model = tf.keras.models.load_model(in_model)
 
     # Bounding box utility object
     bbox_util = BBoxUtils(n_det, default_boxes_cwh)
@@ -162,11 +197,13 @@ def main():
         "deeplab_output": DeeplabLoss(),
         "ssd_output": SSDLoss(n_det),
     }
+
     # loss weights
     lossWeights = {
-        "deeplab_output": 1.0,
-        "ssd_output": 1.0,
+        "deeplab_output": deeplab_weight,
+        "ssd_output": ssd_weight
     }
+
     # compile combined model
     model.compile(
         optimizer=optimizers.Adam(),
@@ -238,16 +275,8 @@ def main():
         preprocess((300, 300), bbox_util, n_seg))
 
     # Create batches
-    train_ds_batch = train_ds.batch(batch_size=8)
-    val_ds_batch = val_ds.batch(batch_size=8)
-
-    # load model if fine tuning
-    if in_model:
-        with custom_object_scope({
-                    'SSDLoss': SSDLoss,
-                    'DeeplabLoss': DeeplabLoss
-                }):
-            model = tf.keras.models.load_model(in_model)
+    train_ds_batch = train_ds.batch(batch_size=batch_size)
+    val_ds_batch = val_ds.batch(batch_size=batch_size)
 
     # prepare callbacks
     callbacks = []
@@ -259,6 +288,7 @@ def main():
     model.fit(
         train_ds_batch,
         epochs=num_epochs,
+        steps_per_epoch=batches_per_epoch,
         validation_data=val_ds_batch,
         callbacks=callbacks)
 

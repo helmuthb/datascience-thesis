@@ -1,4 +1,3 @@
-from collections import defaultdict
 import os
 import argparse
 import timeit
@@ -6,7 +5,6 @@ import timeit
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope
 import cv2
-import numpy as np
 
 from lib.preprocess import (
     preprocess, filter_classes_bbox, filter_classes_mask, subset_names)
@@ -92,17 +90,8 @@ def main():
     val_ds = val_ds_filtered.map(
         preprocess((300, 300), bbox_util, n_seg))
 
-    # find for each validation sample the highest class
-    for sample in val_ds:
-        boxes = sample[1][1]
-        num_boxes = boxes.shape[1]
-        max_c = defaultdict(int)
-        for b in range(num_boxes):
-            c = np.argmax(boxes[b, :-4])
-            max_c[c] += 1
-
     # Create batches
-    val_ds_batch = val_ds.batch(batch_size=8)
+    val_ds_batch = val_ds.batch(batch_size=128)
 
     # load model
     with custom_object_scope({
@@ -116,19 +105,11 @@ def main():
     print(preds[0].shape)  # deeplab
     print(preds[1].shape)  # ssd
 
-    # find for each prediction the highest class
-    num_samples = preds[1].shape[0]
-    num_boxes = preds[1].shape[1]
-    for i in range(num_samples):
-        max_c = defaultdict(int)
-        for b in range(num_boxes):
-            c = np.argmax(preds[1][i, b, :-4])
-            max_c[c] += 1
-        # print(i, max_c)
     # combine ...
-    i_origs = val_ds_orig.as_numpy_iterator()
+    i_origs = val_ds_filtered.as_numpy_iterator()
     for s, p, o in zip(preds[0], preds[1], i_origs):
         image, boxes_xy, boxes_cl, mask, name = o
+        mask = mask[0, :, :]
         name = name.decode('utf-8')
         boxes_xy = boxes_xy.copy()
         boxes_xy[:, 0] *= 1920

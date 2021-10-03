@@ -132,12 +132,14 @@ def annotate_boxes(img: np.ndarray, b_xy: np.ndarray, b_cl: np.ndarray,
     for i, box_xy in enumerate(boxes_xy):
         cl = b_cl[i]
         color = [x/256 for x in COLORMAP[cl]]
+        if cl in classes:
+            label = classes[cl]
+        else:
+            label = "unknown"
         # Score is optional
         if b_sc is not None:
             sc = b_sc[i].round(2)
-            label = f"{classes[cl]}: {sc}"
-        else:
-            label = classes[cl]
+            label = f"{label}: {sc}"
         # draw bounding box
         x0 = box_xy[0]
         y0 = box_xy[1]

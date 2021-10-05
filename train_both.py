@@ -138,6 +138,11 @@ def main():
         default=8,
         help='Number of samples per batch (default=8).'
     )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Debugging: add more metrics for detailed analysis'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     plot_keras = args.plot_keras
@@ -151,6 +156,7 @@ def main():
     deeplab_weight = args.deeplab_weight
     batches_per_epoch = args.batches_per_epoch
     batch_size = args.batch_size
+    debug = args.debug
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
@@ -205,12 +211,9 @@ def main():
     }
 
     # compile combined model
-    model.compile(
-        optimizer=optimizers.Adam(),
-        loss=losses,
-        loss_weights=lossWeights,
-        run_eagerly=False,
-        metrics={
+    metrics = None
+    if debug:
+        metrics = {
             "deeplab_output": DeeplabLoss(),
             "ssd_output": {
                 "neg_cls_loss": SSDLoss(n_det, "neg_cls_loss"),
@@ -218,6 +221,12 @@ def main():
                 "pos_loc_loss": SSDLoss(n_det, "pos_loc_loss")
             }
         }
+    model.compile(
+        optimizer=optimizers.Adam(),
+        loss=losses,
+        loss_weights=lossWeights,
+        run_eagerly=False,
+        metrics=metrics
     )
 
     # Load training & validation data
@@ -233,24 +242,8 @@ def main():
     augmentor.hsv()
     augmentor.random_brightness_contrast()
 
-    # generator with augmentation
-    def train_aug_gen():
-        """Get augmented data from training data.
-        """
-        for e in train_ds_orig.as_numpy_iterator():
-            yield(augmentor(*e))
-
     if augment:
-        train_ds_aug = tf.data.Dataset.from_generator(
-            train_aug_gen,
-            output_signature=(
-                tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
-                tf.TensorSpec(shape=(None, 4), dtype=tf.float32),
-                tf.TensorSpec(shape=(None,), dtype=tf.int64),
-                tf.TensorSpec(shape=(None, None, 1), dtype=tf.uint8),
-                tf.TensorSpec(shape=(), dtype=tf.string)
-            )
-        )
+        train_ds_aug = train_ds_orig.map(augmentor.tf_wrap())
     else:
         train_ds_aug = train_ds_orig
 

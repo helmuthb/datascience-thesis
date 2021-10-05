@@ -4,6 +4,8 @@
 Augmentation of images for training.
 """
 
+import tensorflow as tf
+import numpy as np
 from albumentations import (
     Rotate, RandomBrightnessContrast, JpegCompression, HueSaturationValue,
     HorizontalFlip, CropAndPad, RandomResizedCrop, BboxParams, Compose
@@ -60,7 +62,10 @@ class Augment():
     def random_resized_crop(self, scale=(0.08, 1), ratio=(0.75, 1.33), p=0.5):
         self.transforms.append(RandomResizedCrop(scale, ratio, p))
 
-    def __call__(self, images, boxes_xy, boxes_cl, mask, name):
+    def __call__(self, image, boxes_xy, boxes_cl, mask, name):
+        def _tuple_float(t):
+            return [float(i) for i in t]
+
         if self.t is None:
             self.t = Compose(
                 self.transforms,
@@ -68,11 +73,22 @@ class Augment():
         t = self.t
         boxes = [list(b) + [str(c)] for b, c in zip(boxes_xy, boxes_cl)]
         out = t(
-            image=images,
+            image=image,
             bboxes=boxes,
             mask=mask
         )
-        bout_xy = [b[:4] for b in out['bboxes']]
+        # print(boxes_xy)
+        bout_xy = np.array([b[:4] for b in out['bboxes']], np.single)
         bout_cl = [int(b[4]) for b in out['bboxes']]
-        return (out['image'], bout_xy, bout_cl,
+        return (out['image'].astype(np.single),
+                bout_xy, bout_cl,
                 out['mask'], name)
+
+    def tf_wrap(self):
+        def _tf_wrap(image, boxes_xy, boxes_cl, mask, name):
+            return tf.numpy_function(
+                self,
+                (image, boxes_xy, boxes_cl, mask, name),
+                (tf.float32, tf.float32, tf.int64, tf.uint8, tf.string)
+            )
+        return _tf_wrap

@@ -109,7 +109,6 @@ def main():
     i_origs = val_ds_filtered.as_numpy_iterator()
     for s, p, o in zip(preds[0], preds[1], i_origs):
         image, boxes_xy, boxes_cl, mask, name = o
-        mask = mask[0, :, :]
         name = name.decode('utf-8')
         boxes_xy = boxes_xy.copy()
         boxes_xy[:, 0] *= 1920

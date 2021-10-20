@@ -5,7 +5,6 @@ Preprocessing of images for SSD.
 """
 
 import tensorflow as tf
-import numpy as np
 from typing import Tuple, List
 
 from .np_bbox_utils import BBoxUtils
@@ -55,32 +54,21 @@ def filter_classes_bbox(classes: List[str], subset: List[List]):
     # make sure that 0 maps to 0
     if indices[0] != 0:
         raise ValueError(f"Background '{classes[0]}' must map to 0")
+    tf_indices = tf.convert_to_tensor(indices, tf.uint8)
 
     def _do_filter(boxes_xy, boxes_cl):
-        # to numpy for boxes and classes
-        boxes_xy = boxes_xy.numpy()
-        boxes_cl = boxes_cl.numpy()
-        # empty set of results
-        ret_xy = []
-        ret_cl = []
-        # find classes in the list of indices
-        for c, box in zip(boxes_cl, boxes_xy):
-            i = indices[c] if 0 <= c < len(indices) else 0
-            if i != 0:
-                ret_xy.append(box)
-                ret_cl.append(i)
-        # is the list empty?
-        if len(ret_cl) == 0:
-            ret_xy.append([0., 0., 1., 1.])
-            ret_cl.append(0)
-        return np.array(ret_xy), np.array(ret_cl)
+        # convert classes to subset
+        boxes_cl = tf.nn.embedding_lookup(
+            tf_indices,
+            boxes_cl
+        )
+        # only return coordinates / classes not 0
+        cl_mask = (boxes_cl > 0)
+        cl_mask.set_shape([None])
+        return boxes_xy[cl_mask], boxes_cl[cl_mask]
 
     def _filter_wrap(image, boxes_xy, boxes_cl, mask, name):
-        ret_xy, ret_cl = tf.py_function(
-            _do_filter,
-            (boxes_xy, boxes_cl),
-            (tf.float32, tf.uint8)
-        )
+        ret_xy, ret_cl = _do_filter(boxes_xy, boxes_cl)
         return image, ret_xy, ret_cl, mask, name
 
     return _filter_wrap
@@ -97,24 +85,18 @@ def filter_classes_mask(classes: List[str], subset: List[str]):
     # make sure that 0 maps to 0
     if indices[0] != 0:
         raise ValueError(f"Background '{classes[0]}' must map to 0")
-
-    def _translate(i: int) -> int:
-        return indices[i] if 0 <= i < len(indices) else 0
+    # extend to 255 elements
+    while len(indices) < 256:
+        indices.append(0)
+    tf_indices = tf.convert_to_tensor(indices, tf.uint8)
 
     def _do_filter(mask):
-        # to numpy for mask
-        mask = mask.numpy()
-        # vectorized function for mapping
-        np_translate = np.vectorize(_translate)
-        # apply on mask
-        return np_translate(mask)
+        # convert classes to subset
+        mask = tf.gather(tf_indices, tf.cast(mask, tf.int32))
+        return mask
 
     def _filter_wrap(image, boxes_xy, boxes_cl, mask, name):
-        ret_mask = tf.py_function(
-            _do_filter,
-            (mask,),
-            (tf.uint8,)
-        )
+        ret_mask = _do_filter(mask)
         return image, boxes_xy, boxes_cl, ret_mask, name
 
     return _filter_wrap

@@ -143,6 +143,11 @@ def main():
         action='store_true',
         help='Debugging: add more metrics for detailed analysis'
     )
+    parser.add_argument(
+        '--all-classes',
+        action='store_true',
+        help='Use all classes instead of a subset'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     plot_keras = args.plot_keras
@@ -157,12 +162,17 @@ def main():
     batches_per_epoch = args.batches_per_epoch
     batch_size = args.batch_size
     debug = args.debug
+    all_classes = args.all_classes
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
     # number of classes
-    n_seg = len(rs19.seg_subset)
-    n_det = len(rs19.det_subset)
+    if all_classes:
+        n_seg = len(rs19.seg_classes)
+        n_det = len(rs19.det_classes)
+    else:
+        n_seg = len(rs19.seg_subset)
+        n_det = len(rs19.det_subset)
 
     # build model
     models = ssd_deeplab_model((300, 300), n_det, n_seg)
@@ -248,18 +258,22 @@ def main():
         train_ds_aug = train_ds_orig
 
     # Filter for classes of interest
-    train_ds_filtered_det = train_ds_aug.map(
-        filter_classes_bbox(rs19.det_classes, rs19.det_subset)
-    )
-    val_ds_filtered_det = val_ds_orig.map(
-        filter_classes_bbox(rs19.det_classes, rs19.det_subset)
-    )
-    train_ds_filtered = train_ds_filtered_det.map(
-        filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
-    )
-    val_ds_filtered = val_ds_filtered_det.map(
-        filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
-    )
+    if all_classes:
+        train_ds_filtered = train_ds_aug
+        val_ds_filtered = val_ds_orig
+    else:
+        train_ds_filtered_det = train_ds_aug.map(
+            filter_classes_bbox(rs19.det_classes, rs19.det_subset)
+        )
+        val_ds_filtered_det = val_ds_orig.map(
+            filter_classes_bbox(rs19.det_classes, rs19.det_subset)
+        )
+        train_ds_filtered = train_ds_filtered_det.map(
+            filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
+        )
+        val_ds_filtered = val_ds_filtered_det.map(
+            filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
+        )
 
     # Preprocess data
     train_ds = train_ds_filtered.map(

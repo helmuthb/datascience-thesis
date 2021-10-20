@@ -14,6 +14,7 @@ import json
 import numpy as np
 
 from lib.tfr_utils import write_tfrecords, parse_json
+import lib.rs19_classes as rs19
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -24,12 +25,6 @@ __version__ = '0.1.0'
 __maintainer__ = 'Helmuth Breitenfellner'
 __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
-
-
-# Object classes (for bounding boxes) which are used in RailSem19
-CLASSES = ["background", "buffer-stop", "crossing", "switch-indicator",
-           "switch-left", "switch-right", "switch-static", "switch-unknown",
-           "track-signal-back", "track-signal-front", "track-sign-front"]
 
 
 def read_folder(root):
@@ -49,7 +44,7 @@ def read_folder(root):
         with open(os.path.join(jsons_path, f), 'r') as json_file:
             json_data = json.loads(json_file.read())
         # parse objects
-        metadata, objects = parse_json(json_data, CLASSES)
+        metadata, objects = parse_json(json_data, rs19.det_classes)
         # get JPEG file path
         frame = json_data['frame']
         jpeg_path = os.path.join(jpegs_path, frame + ".jpg")

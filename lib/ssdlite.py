@@ -68,10 +68,22 @@ def ssdlite_base_layers(model: Model):
     Returns:
         layers (6-Tuple): Six layers to be used by SSDlite.
     """
+    # get names of layers to identify correct ones
+    names = {layer.name for layer in model.layers}
     # get first layer of interest
-    layer1 = model.get_layer(name="bottleneck_14_expand_relu6")
+    if "bottleneck_14_expand_relu6" in names:
+        layer1 = model.get_layer(name="bottleneck_14_expand_relu6")
+    elif "block_13_expand_relu" in names:
+        layer1 = model.get_layer(name="block_13_expand_relu")
+    else:
+        raise ValueError("Unknown base model")
     # get second layer of interest = final layer
-    layer2 = model.get_layer(name="conv_pw1_relu6")
+    if "conv_pw1_relu6" in names:
+        layer2 = model.get_layer(name="conv_pw1_relu6")
+    elif "out_relu" in names:
+        layer2 = model.get_layer(name="out_relu")
+    else:
+        raise ValueError("Unknown base model")
     # add four additional Bottleneck layers
     layer3 = model.get_layer(name="feat1_project_bn")
     layer4 = model.get_layer(name="feat2_project_bn")

@@ -6,16 +6,17 @@ import tensorflow.keras.optimizers as optimizers
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope, plot_model
 from tensorflow.keras.callbacks import CSVLogger
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from lib.augment import Augment
 
 from lib.deeplab import add_deeplab_features
+from lib.metrics import MeanAveragePrecisionMetric, MeanIoUMetric
 from lib.np_bbox_utils import BBoxUtils
 from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
 from lib.ssdlite import (
     add_ssdlite_features, detection_head, get_default_boxes_cwh,
     ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
-from lib.mobilenet import mobilenetv2
 from lib.losses import SSDLoss, DeeplabLoss
 import lib.rs19_classes as rs19
 
@@ -44,7 +45,9 @@ def ssd_deeplab_model(size, n_det, n_seg):
     input_layer = tf.keras.layers.Input(
         shape=(size[0], size[1], 3))
     # base model
-    base = mobilenetv2(input_layer)
+    base = MobileNetV2(
+        input_tensor=input_layer,
+        include_top=False)
     # add deeplab layers
     deeplab_output = add_deeplab_features(base, n_seg)
     # add SSDlite layers
@@ -95,11 +98,6 @@ def main():
         help='Folder for model plots if desired.'
     )
     parser.add_argument(
-        '--plot-keras',
-        action='store_true',
-        help='Create plot / summary for Keras mobilenet as well.'
-    )
-    parser.add_argument(
         '--epochs',
         type=int,
         help='Number of epochs.',
@@ -148,9 +146,29 @@ def main():
         action='store_true',
         help='Use all classes instead of a subset'
     )
+    parser.add_argument(
+        '--freeze-base',
+        action='store_true',
+        help='Freeze base layers'
+    )
+    parser.add_argument(
+        '--freeze-ssd',
+        action='store_true',
+        help='Freeze SSD layers'
+    )
+    parser.add_argument(
+        '--freeze-deeplab',
+        action='store_true',
+        help='Freeze DeepLab layers'
+    )
+    parser.add_argument(
+        '--width',
+        type=int,
+        default=224,
+        help='Specify image width for model'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
-    plot_keras = args.plot_keras
     tfrecdir = args.tfrecords
     in_model = args.in_model
     out_model = args.out_model
@@ -163,6 +181,10 @@ def main():
     batch_size = args.batch_size
     debug = args.debug
     all_classes = args.all_classes
+    freeze_base = args.freeze_base
+    freeze_ssd = args.freeze_ssd
+    freeze_deeplab = args.freeze_deeplab
+    width = args.width
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
@@ -175,17 +197,35 @@ def main():
         n_det = len(rs19.det_subset)
 
     # build model
-    models = ssd_deeplab_model((300, 300), n_det, n_seg)
+    models = ssd_deeplab_model((width, width), n_det, n_seg)
     model, default_boxes_cwh, base, deeplab, ssd = models
+
+    # find SSD & Deeplab layers
+    base_names = {layer.name for layer in base.layers}
+    deeplab_names = {layer.name for layer in deeplab.layers} - base_names
+    ssd_names = {layer.name for layer in ssd.layers} - base_names
 
     # load model if fine tuning
     if in_model:
         with custom_object_scope({
                     'SSDLoss': SSDLoss,
-                    'DeeplabLoss': DeeplabLoss
+                    'DeeplabLoss': DeeplabLoss,
+                    'MeanIoUMetric': MeanIoUMetric,
+                    'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric
                 }):
             model = tf.keras.models.load_model(in_model)
 
+    # Freeze weights as requested
+    if freeze_ssd:
+        for l_name in ssd_names:
+            model.get_layer(l_name).trainable = False
+    if freeze_deeplab:
+        for l_name in deeplab_names:
+            model.get_layer(l_name).trainable = False
+    if freeze_base:
+        for layer in model.layers:
+            if layer.name not in ssd_names and layer.name not in deeplab_names:
+                layer.trainable = False
     # Bounding box utility object
     bbox_util = BBoxUtils(n_det, default_boxes_cwh)
 
@@ -197,16 +237,6 @@ def main():
         print_model(base, 'base', plot_dir)
         print_model(deeplab, 'deeplab', plot_dir)
         print_model(ssd, 'ssd', plot_dir)
-        if plot_keras:
-            # Keras reference implementation
-            mnet_keras = tf.keras.applications.MobileNetV2(
-                input_shape=(300, 300, 3),
-                include_top=False,
-                weights=None,
-                classes=n_det
-            )
-            # describe model
-            print_model(mnet_keras, 'keras', plot_dir)
 
     # Loss functions
     losses = {
@@ -224,12 +254,24 @@ def main():
     metrics = None
     if debug:
         metrics = {
-            "deeplab_output": DeeplabLoss(),
+            "deeplab_output": MeanIoUMetric(num_classes=n_seg),
             "ssd_output": {
+                "map": MeanAveragePrecisionMetric(
+                    num_classes=n_det,
+                    default_boxes_cwh=default_boxes_cwh
+                ),
                 "neg_cls_loss": SSDLoss(n_det, "neg_cls_loss"),
                 "pos_cls_loss": SSDLoss(n_det, "pos_cls_loss"),
                 "pos_loc_loss": SSDLoss(n_det, "pos_loc_loss")
             }
+        }
+    else:
+        metrics = {
+            "deeplab_output": MeanIoUMetric(num_classes=n_seg),
+            "ssd_output": MeanAveragePrecisionMetric(
+                num_classes=n_det,
+                default_boxes_cwh=default_boxes_cwh
+            )
         }
     model.compile(
         optimizer=optimizers.Adam(),
@@ -277,9 +319,9 @@ def main():
 
     # Preprocess data
     train_ds = train_ds_filtered.map(
-        preprocess((300, 300), bbox_util, n_seg))
+        preprocess((width, width), bbox_util, n_seg))
     val_ds = val_ds_filtered.map(
-        preprocess((300, 300), bbox_util, n_seg))
+        preprocess((width, width), bbox_util, n_seg))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=batch_size)

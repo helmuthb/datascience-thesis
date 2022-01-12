@@ -150,7 +150,7 @@ class AdaptiveAvgPool2D(Layer):
     """AvgPooling layer which will output a dimension of (1, 1) at the end.
     """
     def __init__(self, name):
-        super(AdaptiveAvgPool2D, self).__init__(name=name)
+        super().__init__(name=name)
 
     def build(self, input_shape):
         self.avg_layer = AveragePooling2D(
@@ -166,14 +166,14 @@ class ImageResize(Layer):
     """Keras Layer for resizing of an image.
     """
     def __init__(self, name, img_size):
-        super(ImageResize, self).__init__(name=name)
+        super().__init__(name=name)
         self.img_size = img_size
 
     def call(self, inputs):
         return tf.image.resize(inputs, self.img_size)
 
     def get_config(self):
-        config = super(ImageResize, self).get_config()
+        config = super().get_config()
         config.update({'img_size': self.img_size})
         return config
 

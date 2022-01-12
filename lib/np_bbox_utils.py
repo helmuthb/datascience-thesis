@@ -110,8 +110,8 @@ def iou_xy(b1_xy, b2_xy, pairwise=True):
     Args:
         b1_xy (np.ndarray [4] or [n1, 4]): List 1 of boxes in x0/y0/x1/y1.
         b2_xy (np.ndarray [4] or [n2, 4]): List 2 of boxes in x0/y0/x1/y1.
-        pairwise (boolean): Flag whether each entry of b1 corresponds
-            to the entry with same index in b2 (True), or whether every
+        pairwise (boolean): Flag whether each entry of b1 corresponds to the
+            entry with same index in b2 (True), or whether every
             combination of elements from b1 and b2 shall be taken (False).
     Returns:
         IoU (np.ndarray, [n1] or [n1, n2]): IoU measure.
@@ -545,6 +545,6 @@ class BBoxUtils(object):
                     boxes_xy = np.vstack((boxes_xy, i_boxes_xy))
                     boxes_cl = np.hstack(
                         (boxes_cl, np.full(shape=(i_n,), fill_value=i)))
-                    boxes_sc = np.vstack((boxes_sc, i_boxes_sc))
+                    boxes_sc = np.hstack((boxes_sc, i_boxes_sc))
         # return result
         return boxes_xy, boxes_cl, boxes_sc

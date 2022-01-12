@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 """
-This package defines the DeepLab segmentation model.
+This package defines the DeepLabV3+ segmentation model.
 """
 
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Conv2D, Input
+from tensorflow.keras.layers import Conv2D, Softmax
 
-from .mobilenet import mobilenetv2
 from .layers import ImageResize, aspp, decoder
 
 __author__ = 'Helmuth Breitenfellner'
@@ -27,10 +26,18 @@ def add_deeplab_features(
     """
     inputs = base.input
     outputs = base.output
+    names = {layer.name for layer in base.layers}
     # Add ASPP blocks
     x = aspp(outputs, name="aspp", output_stride=output_stride)
     # fetch skip feature
-    skip = base.get_layer(name="bottleneck_2_project_bn").output
+    if "bottleneck_2_project_bn" in names:
+        # In case of locally created model
+        skip = base.get_layer(name="bottleneck_2_project_bn").output
+    elif "block_1_project_BN" in names:
+        # In case of Keras provided model
+        skip = base.get_layer(name="block_1_project_BN").output
+    else:
+        raise ValueError("Base model is unknown")
     # Add decoder block
     x = decoder(x, skip, name="decoder")
     # final prediction block
@@ -40,22 +47,9 @@ def add_deeplab_features(
         name="deeplab_conv2d")(x)
     # resize to original size
     img_size = inputs.shape[1:3]
-    x = ImageResize(img_size=img_size, name="deeplab_output")(x)
+    x = ImageResize(img_size=img_size, name="deeplab_resize")(x)
     # softmax activation
-    # x = Softmax(name="deeplab_softmax")(x)
+    x = Softmax(name="deeplab_output")(x)
     # return outputs
     return x
     # return Model(inputs=inputs, outputs=x, name="deeplab")
-
-
-def deeplab(input_shape, n_classes):
-    """Get DeepLab model based on MobileNetV2.
-    """
-    input_layer = Input(
-        shape=(input_shape[0], input_shape[1], 3))
-    # base model
-    base = mobilenetv2(input_layer)
-    # extended model
-    x = add_deeplab_features(base, n_classes)
-    model = Model(inputs=input_layer, outputs=x, name="deeplab")
-    return model

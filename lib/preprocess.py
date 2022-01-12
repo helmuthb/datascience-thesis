@@ -103,7 +103,7 @@ def filter_classes_mask(classes: List[str], subset: List[str]):
 
 
 def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
-    """Preprocess image: resize, scale, filter small boxes.
+    """Preprocess image: resize, scale, filter small boxes, drop name.
 
     Args:
         size (tuple(int)): Target image size.
@@ -139,6 +139,8 @@ def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
             (image, boxes_xy, boxes_cl, mask),
             (tf.float32, tf.uint8, tf.float32)
         )
+        image.set_shape([size[0], size[1], 3])
+        mask.set_shape([size[0], size[1]])
         return image, (mask, gt)
 
     return _preprocess_wrap

@@ -6,6 +6,7 @@ import tensorflow.keras.optimizers as optimizers
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope, plot_model
 from tensorflow.keras.callbacks import CSVLogger
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 from lib.augment import Augment
 
@@ -19,6 +20,28 @@ from lib.ssdlite import (
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLoss, DeeplabLoss
 import lib.rs19_classes as rs19
+
+
+class CustomSchedule(LearningRateSchedule):
+    """Custom schedule, based on the code in Transformer tutorial.
+    https://www.tensorflow.org/text/tutorials/transformer#optimizer
+    """
+    def __init__(self, peak_rate, warmup_steps):
+        super().__init__()
+        self.peak_rate = peak_rate
+        self.warmup_steps = warmup_steps
+        self.warmup_factor = warmup_steps ** -1.5
+
+    def get_config(self):
+        config = {}
+        config['peak_rate'] = self.peak_rate
+        config['warmup_steps'] = self.warmup_steps
+        return config
+
+    def __call__(self, step):
+        a1 = tf.math.rsqrt(step)
+        a2 = step * self.warmup_factor
+        return self.peak_rate * tf.math.minimum(a1, a2)
 
 
 def print_model(model, name, out_folder):
@@ -162,10 +185,34 @@ def main():
         help='Freeze DeepLab layers'
     )
     parser.add_argument(
-        '--width',
+        '--model-width',
         type=int,
         default=224,
         help='Specify image width for model'
+    )
+    parser.add_argument(
+        '--image-width',
+        type=int,
+        default=1920,
+        help='Specify original image width'
+    )
+    parser.add_argument(
+        '--image-height',
+        type=int,
+        default=1080,
+        help='Specify original image height'
+    )
+    parser.add_argument(
+        '--warmup-steps',
+        type=int,
+        default=8000,
+        help='Warmup steps for learning rate schedule'
+    )
+    parser.add_argument(
+        '--learning-rate',
+        type=float,
+        default=0.001,
+        help='Peek learning rate'
     )
     args = parser.parse_args()
     plot_dir = args.plot
@@ -184,7 +231,11 @@ def main():
     freeze_base = args.freeze_base
     freeze_ssd = args.freeze_ssd
     freeze_deeplab = args.freeze_deeplab
-    width = args.width
+    model_width = args.model_width
+    image_width = args.image_width
+    image_height = args.image_height
+    warmup_steps = args.warmup_steps
+    learning_rate = args.learning_rate
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
@@ -197,7 +248,7 @@ def main():
         n_det = len(rs19.det_subset)
 
     # build model
-    models = ssd_deeplab_model((width, width), n_det, n_seg)
+    models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
     model, default_boxes_cwh, base, deeplab, ssd = models
 
     # find SSD & Deeplab layers
@@ -211,7 +262,8 @@ def main():
                     'SSDLoss': SSDLoss,
                     'DeeplabLoss': DeeplabLoss,
                     'MeanIoUMetric': MeanIoUMetric,
-                    'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric
+                    'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric,
+                    'CustomSchedule': CustomSchedule,
                 }):
             model = tf.keras.models.load_model(in_model)
 
@@ -273,8 +325,10 @@ def main():
                 default_boxes_cwh=default_boxes_cwh
             )
         }
+    # optimizer with custom schedule
+    schedule = CustomSchedule(learning_rate, warmup_steps)
     model.compile(
-        optimizer=optimizers.Adam(),
+        optimizer=optimizers.Adam(learning_rate=schedule),
         loss=losses,
         loss_weights=lossWeights,
         run_eagerly=False,
@@ -288,7 +342,7 @@ def main():
             os.path.join(tfrecdir, 'val.tfrec'))
 
     # Augment data
-    augmentor = Augment(1080, 1920)
+    augmentor = Augment(image_height, image_width)
     augmentor.crop_and_pad()
     augmentor.horizontal_flip()
     augmentor.hsv()
@@ -319,9 +373,9 @@ def main():
 
     # Preprocess data
     train_ds = train_ds_filtered.map(
-        preprocess((width, width), bbox_util, n_seg))
+        preprocess((model_width, model_width), bbox_util, n_seg))
     val_ds = val_ds_filtered.map(
-        preprocess((width, width), bbox_util, n_seg))
+        preprocess((model_width, model_width), bbox_util, n_seg))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=batch_size)

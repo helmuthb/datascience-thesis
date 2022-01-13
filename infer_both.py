@@ -80,16 +80,30 @@ def main():
         help='Use all classes instead of a subset'
     )
     parser.add_argument(
-        '--width',
+        '--model-width',
         type=int,
         default=224,
         help='Specify image width for model'
+    )
+    parser.add_argument(
+        '--image-width',
+        type=int,
+        default=1920,
+        help='Specify original image width'
+    )
+    parser.add_argument(
+        '--image-height',
+        type=int,
+        default=1080,
+        help='Specify original image height'
     )
     args = parser.parse_args()
     outdir = args.out_samples
     batch_size = args.batch_size
     all_classes = args.all_classes
-    width = args.width
+    model_width = args.model_width
+    image_width = args.image_width
+    image_height = args.image_height
     # create output directory if missing
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
@@ -109,7 +123,7 @@ def main():
         det_names = subset_names(rs19.det_subset)
 
     # get default boxes
-    default_boxes_cwh = ssd_defaults((width, width))
+    default_boxes_cwh = ssd_defaults((model_width, model_width))
 
     # Bounding box utility object
     bbox_util = BBoxUtils(n_det, default_boxes_cwh, min_confidence=0.01)
@@ -131,7 +145,7 @@ def main():
 
     # Preprocess data
     val_ds = val_ds_filtered.map(
-        preprocess((width, width), bbox_util, n_seg))
+        preprocess((model_width, model_width), bbox_util, n_seg))
 
     # Create batches
     val_ds_batch = val_ds.batch(batch_size=batch_size)
@@ -162,10 +176,10 @@ def main():
             boxes_xy, boxes_cl, p_boxes_xy, p_boxes_cl, p_boxes_sc
         )
         boxes_xy = boxes_xy.copy()
-        boxes_xy[:, 0] *= 1920
-        boxes_xy[:, 1] *= 1080
-        boxes_xy[:, 2] *= 1920
-        boxes_xy[:, 3] *= 1080
+        boxes_xy[:, 0] *= image_width
+        boxes_xy[:, 1] *= image_height
+        boxes_xy[:, 2] *= image_width
+        boxes_xy[:, 3] *= image_height
         img = image.copy()
         for box_xy in boxes_xy:
             top_left = (int(round(box_xy[0])), int(round(box_xy[1])))

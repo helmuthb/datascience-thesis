@@ -4,48 +4,79 @@ import timeit
 
 import tensorflow as tf
 from tensorflow.keras.utils import custom_object_scope
-from tensorflow.keras.metrics import MeanIoU
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 import cv2
 
 from lib.preprocess import (
     preprocess, filter_classes_bbox, filter_classes_mask, subset_names)
 from lib.np_bbox_utils import BBoxUtils, to_cwh
 from lib.evaluate import DetEval, SegEval
+from lib.deeplab import add_deeplab_features
 from lib.ssdlite import (
     add_ssdlite_features, get_default_boxes_cwh,
-    ssdlite_base_layers)
+    ssdlite_base_layers, detection_head)
 from lib.tfr_utils import read_tfrecords
-from lib.mobilenet import mobilenetv2
 from lib.losses import SSDLoss, DeeplabLoss
 from lib.metrics import MeanAveragePrecisionMetric, MeanIoUMetric
 from lib.visualize import annotate_boxes, annotate_segmentation
 import lib.rs19_classes as rs19
 
 
-def ssd_defaults(size):
+class CustomSchedule(LearningRateSchedule):
+    """Custom schedule, based on the code in Transformer tutorial.
+    https://www.tensorflow.org/text/tutorials/transformer#optimizer
+    """
+    def __init__(self, peak_rate, warmup_steps):
+        super().__init__()
+        self.peak_rate = peak_rate
+        self.warmup_steps = warmup_steps
+        self.warmup_factor = warmup_steps ** -1.5
+
+    def get_config(self):
+        config = {}
+        config['peak_rate'] = self.peak_rate
+        config['warmup_steps'] = self.warmup_steps
+        return config
+
+    def __call__(self, step):
+        a1 = tf.math.rsqrt(step)
+        a2 = step * self.warmup_factor
+        return self.peak_rate * tf.math.minimum(a1, a2)
+
+
+def ssd_deeplab_model(size, n_det, n_seg):
     """
     """
     input_layer = tf.keras.layers.Input(
         shape=(size[0], size[1], 3))
     # base model
-    base = mobilenetv2(input_layer)
+    base = MobileNetV2(
+        input_tensor=input_layer,
+        include_top=False)
+    # add deeplab layers
+    deeplab_output = add_deeplab_features(base, n_seg)
     # add SSDlite layers
     ext_base = add_ssdlite_features(base)
     l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
+    # add class and location predictions
+    ssd_output = detection_head(n_det, l1, l2, l3, l4, l5, l6)
+    # create models
+    ssd_model = tf.keras.Model(
+        inputs=input_layer,
+        outputs=ssd_output
+    )
+    deeplab_model = tf.keras.Model(
+        inputs=input_layer,
+        outputs=deeplab_output
+    )
+    combined_model = tf.keras.Model(
+        inputs=input_layer,
+        outputs=[deeplab_output, ssd_output])
     # calculate default boxes
     default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
-    return default_boxes_cwh
-
-
-class MeanIoUfromProbabilities(MeanIoU):
-    def __init__(self, num_classes, name='mean_iou', **kwargs):
-        super().__init__(num_classes, name=name, **kwargs)
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        return super().update_state(
-            tf.identity(y_true),
-            tf.argmax(y_pred, axis=-1),
-            sample_weight=sample_weight)
+    # return combined model and the defaults
+    return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
 
 
 def main():
@@ -122,8 +153,9 @@ def main():
         seg_names = rs19.seg_classes
         det_names = subset_names(rs19.det_subset)
 
-    # get default boxes
-    default_boxes_cwh = ssd_defaults((model_width, model_width))
+    # build model
+    models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
+    model, default_boxes_cwh, base, deeplab, ssd = models
 
     # Bounding box utility object
     bbox_util = BBoxUtils(n_det, default_boxes_cwh, min_confidence=0.01)
@@ -155,7 +187,8 @@ def main():
                 'SSDLoss': SSDLoss,
                 'DeeplabLoss': DeeplabLoss,
                 'MeanIoUMetric': MeanIoUMetric,
-                'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric
+                'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric,
+                'CustomSchedule': CustomSchedule,
             }):
         model = tf.keras.models.load_model(args.model)
 

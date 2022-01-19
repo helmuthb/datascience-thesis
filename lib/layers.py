@@ -7,7 +7,8 @@ Additional layers as needed for SSD-Lite and MobileNetV2.
 import tensorflow as tf
 from tensorflow.keras.layers import (
     Layer, BatchNormalization, Conv2D, ReLU, DepthwiseConv2D, AveragePooling2D,
-    Concatenate, Dropout, Add)
+    Concatenate, Dropout, Add, ZeroPadding2D)
+import tensorflow.keras.backend as K
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -116,26 +117,29 @@ def bottleneck2(
         )
     else:
         expand = inputs
+    expand_size = K.int_shape(expand)[1:3]
+    if expand_size[0] is None:
+        adjust = (1, 1)
+    else:
+        adjust = (1 - expand_size[0] % 2, 1 - expand_size[1] % 2)
+    padding = ((1 - adjust[0], 1), (1 - adjust[1], 1))
+    zeropad = ZeroPadding2D(padding=padding, name=f"{name}_pad")(expand)
     depthwise = depthwise_bn_relu6(
-        inputs=expand,
+        inputs=zeropad,
         strides=strides,
         name=f"{name}_dw"
     )
-    project_conv = Conv2D(
-        filters=num_filters,
+    project_conv = conv_bn_relu6(
+        inputs=depthwise,
+        num_filters=num_filters,
         kernel_size=(1, 1),
-        use_bias=False,
-        name=f"{name}_project_conv"
-    )(depthwise)
-    project_bn = BatchNormalization(
-        epsilon=1e-3,
-        momentum=0.999,
-        name=f"{name}_project_bn"
-    )(project_conv)
+        strides=1,
+        name=f"{name}_project"
+    )
     if strides == 1 and num_filters == in_channels:
-        added = Add(name=f"{name}_added")([project_bn, inputs])
+        added = Add(name=f"{name}_added")([project_conv, inputs])
     else:
-        added = project_bn
+        added = project_conv
     return added, expand
 
 

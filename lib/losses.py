@@ -10,6 +10,7 @@ import tensorflow as tf
 from tensorflow.keras.losses import (
     Loss, Reduction, sparse_categorical_crossentropy
 )
+import tensorflow.keras.backend as K
 
 from lib.np_bbox_utils import boxes_classes
 
@@ -60,7 +61,7 @@ def softmax_loss(labels, preds):
     return -1. * tf.reduce_sum(entropy_parts, axis=-1)
 
 
-class SSDLoss(Loss):
+class SSDLossOriginal(Loss):
     """SSD Loss used for training or validation batch.
     Through the parameter `key` one can select only part of the combined loss.
     """
@@ -71,7 +72,7 @@ class SSDLoss(Loss):
                  **kwargs):
         if name is None:
             name = name_prefix + key
-        super(SSDLoss, self).__init__(
+        super().__init__(
             reduction=reduction,
             name=name,
             **kwargs)
@@ -79,7 +80,7 @@ class SSDLoss(Loss):
         self.key = key
 
     def get_config(self):
-        config = super(SSDLoss, self).get_config()
+        config = super().get_config()
         config['num_classes'] = self.num_classes
         config['key'] = self.key
         return config
@@ -93,11 +94,8 @@ class SSDLoss(Loss):
         # split into location & class-predictions
         labels_box, labels_cls = boxes_classes(labels)
         logits_box, logits_cls = boxes_classes(logits)
-        # classification loss: using softmax_cross_entropy_with_logits
-        cls_loss = tf.nn.softmax_cross_entropy_with_logits(
-            labels=labels_cls,
-            logits=logits_cls,
-        )
+        # classification loss: using softmax_loss
+        cls_loss = softmax_loss(labels_cls, logits_cls)
         # localization loss: using smooth L1 loss
         loc_loss = smooth_l1(labels_box, logits_box)
         # which true items are negative (i.e. "background" class)?
@@ -154,12 +152,12 @@ class DeeplabLoss(Loss):
     """DeepLab Loss used for training or validation batch.
     """
     def __init__(self, name='deeplab_loss', **kwargs):
-        super(DeeplabLoss, self).__init__(
+        super().__init__(
             name=name,
             **kwargs)
 
     def get_config(self):
-        config = super(DeeplabLoss, self).get_config()
+        config = super().get_config()
         return config
 
     def call(self, labels, logits):
@@ -168,3 +166,60 @@ class DeeplabLoss(Loss):
         return sparse_categorical_crossentropy(
             labels, logits, from_logits=True
         )
+
+
+def focal_loss(y_true, y_pred, gamma=2., alpha=1.):
+    eps = K.epsilon()
+    y_pred = K.clip(y_pred, eps, 1.-eps)
+    pt = tf.where(tf.equal(y_true, 1.), y_pred, 1.-y_pred)
+    loss = - K.pow(1.-pt, gamma) * K.log(pt)
+    loss = alpha * loss
+    return tf.reduce_sum(loss, axis=-1)
+
+
+class SSDLoss(Loss):
+    def __init__(self, num_classes, lambda_conf=1.0, lambda_offsets=0.01,
+                 class_weights=1.0, **kwargs):
+        """This is an implementation of focal loss.
+        """
+        super().__init__(**kwargs)
+        self.num_classes = num_classes
+        self.lambda_conf = lambda_conf
+        self.lambda_offsets = lambda_offsets
+        self.class_weights = class_weights
+
+    def get_config(self):
+        config = super().get_config()
+        config['num_classes'] = self.num_classes
+        config['lambda_conf'] = self.lambda_conf
+        config['lambda_offsets'] = self.lambda_offsets
+        config['class_weights'] = self.class_weights
+        return config
+
+    def call(self, labels, logits):
+        num_classes = tf.shape(labels)[2] - 4
+        eps = K.epsilon()
+
+        conf_true = tf.reshape(labels[:, :, 4:], [-1, num_classes])
+        conf_pred = tf.reshape(logits[:, :, 4:], [-1, num_classes])
+
+        neg_mask_float = conf_true[:, 0]
+        neg_mask = tf.cast(neg_mask_float, tf.bool)
+        pos_mask = tf.logical_not(neg_mask)
+        pos_mask_float = tf.cast(pos_mask, tf.float32)
+        num_total = tf.cast(tf.shape(conf_true)[0], tf.float32)
+        num_pos = tf.reduce_sum(pos_mask_float)
+
+        conf_loss = focal_loss(conf_true, conf_pred, alpha=self.class_weights)
+        conf_loss = tf.reduce_sum(conf_loss)
+        conf_loss = conf_loss / (num_total + eps)
+
+        loc_true = tf.reshape(labels[:, :, 0:4], [-1, 4])
+        loc_pred = tf.reshape(logits[:, :, 0:4], [-1, 4])
+
+        loc_loss = smooth_l1(loc_true, loc_pred)
+        pos_loc_loss = tf.reduce_sum(loc_loss * pos_mask_float)
+        loc_loss = pos_loc_loss / (num_pos + eps)
+
+        loss = self.lambda_conf * conf_loss + self.lambda_offsets * loc_loss
+        return loss

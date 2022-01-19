@@ -184,8 +184,9 @@ class SegEval(object):
         for i, x in enumerate(idxs):
             for j, y in enumerate(idxs):
                 cm2[i, j] = cm[x, y]
+        cm = cm2
         # plot background colors
-        plt.imshow(cm2, interpolation='nearest', cmap=plt.cm.Blues)
+        plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
         plt.title(title)
         # plot labels
         marks = range(self.num_classes)
@@ -197,7 +198,7 @@ class SegEval(object):
         threshold = cm.max() / 2.
         for i in range(self.num_classes):
             for j in range(self.num_classes):
-                v = cm2[i, j]
+                v = cm[i, j]
                 vs = f"{v:.2f}"
                 c = "black" if v < threshold else "yellow"
                 plt.text(j, i, vs, ha='center', color=c, size='x-small')

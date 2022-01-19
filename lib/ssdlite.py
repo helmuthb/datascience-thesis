@@ -11,7 +11,7 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.keras.models import Model
 
-from .layers import bottleneck
+from .layers import bottleneck, depthwise_bn_relu6
 from .mobilenet import mobilenetv2
 
 __author__ = 'Helmuth Breitenfellner'
@@ -121,37 +121,64 @@ def detection_head(n_classes, *layers):
     # Number of default boxes per layer to consider
     n_defaults = get_num_default_boxes()
     # Outputs for class predictions
-    out_classes = [
-        tf.keras.layers.Conv2D(
-            filters=n_a*n_classes,
+    out_classes = []
+    for i, n_a, layer in zip(range(6), n_defaults, layers):
+        dw_relu = depthwise_bn_relu6(
+            inputs=layer.output,
+            name=f"classes_dw{i}",
+            strides=1
+        )
+        conv_2d = tf.keras.layers.Conv2D(
+            filters=n_a * n_classes,
             kernel_size=1,
             name=f"classes_conv{i}"
-        )(layer.output)
-        for i, n_a, layer in zip(range(6), n_defaults, layers)
-    ]
-    # reshape & concatenate
-    classes = tf.keras.layers.Concatenate(axis=1, name='classes_concat')([
-        tf.keras.layers.Reshape(
+        )(dw_relu)
+        bn = tf.keras.layers.BatchNormalization(
+            epsilon=1e-3,
+            momentum=0.999,
+            name=f"classes_bn{i}"
+        )(conv_2d)
+        reshape = tf.keras.layers.Reshape(
             [-1, n_classes],
-            name=f"classes_reshape{i}")(out_c)
-        for i, out_c in enumerate(out_classes)
-    ])
+            name=f"classes_reshape{i}"
+        )(bn)
+        out_classes.append(reshape)
+    # concatenate
+    classes = tf.keras.layers.Concatenate(axis=1, name='classes_concat')(
+        out_classes
+    )
+    # softmax activation for classes
+    # not done here as the softmax activation is part of the loss function
+    # classes = tf.keras.layers.Softmax(name="classes_softmax")(classes)
     # Outputs for bounding boxes
-    out_bboxes = [
-        tf.keras.layers.Conv2D(
-            filters=n_a*4,
+    out_boxes = []
+    for i, n_a, layer in zip(range(6), n_defaults, layers):
+        dw_relu = depthwise_bn_relu6(
+            inputs=layer.output,
+            name=f"boxes_dw{i}",
+            strides=1
+        )
+        conv_2d = tf.keras.layers.Conv2D(
+            filters=n_a * 4,
             kernel_size=1,
-            name=f"bbox_conv{i}"
-        )(layer.output)
-        for i, n_a, layer in zip(range(6), n_defaults, layers)
-    ]
-    # reshape & concatenate
-    bboxes = tf.keras.layers.Concatenate(axis=1, name='bbox_concat')([
-        tf.keras.layers.Reshape([-1, 4], name=f"bbox_reshape{i}")(out_bbox)
-        for i, out_bbox in enumerate(out_bboxes)
-    ])
+            name=f"boxes_conv{i}"
+        )(dw_relu)
+        bn = tf.keras.layers.BatchNormalization(
+            epsilon=1e-3,
+            momentum=0.999,
+            name=f"boxes_bn{i}"
+        )(conv_2d)
+        reshape = tf.keras.layers.Reshape(
+            [-1, 4],
+            name=f"boxes_reshape{i}"
+        )(bn)
+        out_boxes.append(reshape)
+    # concatenate
+    boxes = tf.keras.layers.Concatenate(axis=1, name='bbox_concat')(
+        out_boxes
+    )
     # return bounding boxes & classes concatenated
-    return tf.keras.layers.Concatenate(name="ssd_output")([bboxes, classes])
+    return tf.keras.layers.Concatenate(name="ssd_output")([boxes, classes])
 
 
 def combine_boxes_classes(bboxes, classes, n_classes):

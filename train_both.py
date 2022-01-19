@@ -59,7 +59,7 @@ def print_model(model, name, out_folder):
             model.summary()
     # create a plot
     plot_file = os.path.join(out_folder, name + '.png')
-    plot_model(model, to_file=plot_file)
+    plot_model(model, to_file=plot_file, show_dtype=True, show_shapes=True)
 
 
 def ssd_deeplab_model(size, n_det, n_seg):

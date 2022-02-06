@@ -3,80 +3,16 @@ import argparse
 import timeit
 
 import tensorflow as tf
-from tensorflow.keras.utils import custom_object_scope
-from tensorflow.keras.optimizers.schedules import LearningRateSchedule
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 import cv2
 
+from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
     preprocess, filter_classes_bbox, filter_classes_mask, subset_names)
 from lib.np_bbox_utils import BBoxUtils, to_cwh
 from lib.evaluate import DetEval, SegEval
-from lib.deeplab import add_deeplab_features
-from lib.ssdlite import (
-    add_ssdlite_features, get_default_boxes_cwh,
-    ssdlite_base_layers, detection_head)
 from lib.tfr_utils import read_tfrecords
-from lib.losses import SSDLoss, DeeplabLoss
-from lib.metrics import MeanAveragePrecisionMetric, MeanIoUMetric
 from lib.visualize import annotate_boxes, annotate_segmentation
 import lib.rs19_classes as rs19
-
-
-class CustomSchedule(LearningRateSchedule):
-    """Custom schedule, based on the code in Transformer tutorial.
-    https://www.tensorflow.org/text/tutorials/transformer#optimizer
-    """
-    def __init__(self, peak_rate, warmup_steps):
-        super().__init__()
-        self.peak_rate = peak_rate
-        self.warmup_steps = warmup_steps
-        self.warmup_factor = warmup_steps ** -1.5
-
-    def get_config(self):
-        config = {}
-        config['peak_rate'] = self.peak_rate
-        config['warmup_steps'] = self.warmup_steps
-        return config
-
-    def __call__(self, step):
-        a1 = tf.math.rsqrt(step)
-        a2 = step * self.warmup_factor
-        return self.peak_rate * tf.math.minimum(a1, a2)
-
-
-def ssd_deeplab_model(size, n_det, n_seg):
-    """
-    """
-    input_layer = tf.keras.layers.Input(
-        shape=(size[0], size[1], 3))
-    # base model
-    base = MobileNetV2(
-        input_tensor=input_layer,
-        include_top=False)
-    # add deeplab layers
-    deeplab_output = add_deeplab_features(base, n_seg)
-    # add SSDlite layers
-    ext_base = add_ssdlite_features(base)
-    l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
-    # add class and location predictions
-    ssd_output = detection_head(n_det, l1, l2, l3, l4, l5, l6)
-    # create models
-    ssd_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=ssd_output
-    )
-    deeplab_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=deeplab_output
-    )
-    combined_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=[deeplab_output, ssd_output])
-    # calculate default boxes
-    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
-    # return combined model and the defaults
-    return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
 
 
 def main():
@@ -183,62 +119,50 @@ def main():
     val_ds_batch = val_ds.batch(batch_size=batch_size)
 
     # load model
-    with custom_object_scope({
-                'SSDLoss': SSDLoss,
-                'DeeplabLoss': DeeplabLoss,
-                'MeanIoUMetric': MeanIoUMetric,
-                'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric,
-                'CustomSchedule': CustomSchedule,
-            }):
-        model = tf.keras.models.load_model(args.model)
+    model = tf.keras.models.load_model(args.model)
 
     # perform inference on validation set
-    preds = model.predict(val_ds_batch)
-    print(preds[0].shape)  # deeplab
-    print(preds[1].shape)  # ssd
+    pr_conf, pr_locs, pr_segs = model.predict(val_ds_batch)
 
     # evaluation & plots
     seg_eval = SegEval(n_seg)
     det_eval = DetEval(n_det)
     i_origs = val_ds_filtered.as_numpy_iterator()
-    for s, p, o in zip(preds[0], preds[1], i_origs):
-        image, boxes_xy, boxes_cl, mask, name = o
+    for p_conf, p_locs, p_segs, o in zip(pr_conf, pr_locs, pr_segs, i_origs):
+        image, g_cl, g_xy, g_segs, name = o
         name = name.decode('utf-8')
-        p_boxes_xy, p_boxes_cl, p_boxes_sc = bbox_util.pred_to_boxes(p)
-        det_eval.evaluate_sample(
-            boxes_xy, boxes_cl, p_boxes_xy, p_boxes_cl, p_boxes_sc
-        )
-        boxes_xy = boxes_xy.copy()
-        boxes_xy[:, 0] *= image_width
-        boxes_xy[:, 1] *= image_height
-        boxes_xy[:, 2] *= image_width
-        boxes_xy[:, 3] *= image_height
+        p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
+        det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
+        g_xy = g_xy.copy()
+        g_xy[:, 0] *= image_width
+        g_xy[:, 1] *= image_height
+        g_xy[:, 2] *= image_width
+        g_xy[:, 3] *= image_height
         img = image.copy()
-        for box_xy in boxes_xy:
+        for box_xy in g_xy:
             top_left = (int(round(box_xy[0])), int(round(box_xy[1])))
             bot_right = (int(round(box_xy[2])), int(round(box_xy[3])))
             color = (0, 255, 0)
             cv2.rectangle(img, top_left, bot_right, color, 2)
         cv2.imwrite(f"{outdir}/orig-annotated/{name}.jpg", img)
         file_name = f"{outdir}/pred-annotated/{name}.jpg"
-        annotate_boxes(image, p_boxes_xy, p_boxes_cl, p_boxes_sc,
-                       det_names, file_name)
+        annotate_boxes(image, p_cl, p_sc, p_xy, det_names, file_name)
         # create output file for evaluation
-        p_boxes_cwh = to_cwh(p_boxes_xy)
+        p_cwh = to_cwh(p_xy)
         with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
-            for i, box_cwh in enumerate(p_boxes_cwh):
-                box_xy = p_boxes_xy[i]
-                cl = p_boxes_cl[i].item()
-                sc = p_boxes_sc[i].item()
-                b_str = " ".join([str(b) for b in box_cwh])
-                b2_str = " ".join([str(b) for b in box_xy])
+            for i, cwh in enumerate(p_cwh):
+                xy = p_xy[i]
+                cl = p_cl[i].item()
+                sc = p_sc[i].item()
+                b_str = " ".join([str(b) for b in cwh])
+                b2_str = " ".join([str(b) for b in xy])
                 f.write(f"{cl} {sc} {b_str}\n")
                 f.write(f"# XY: {cl} {sc} {b2_str}\n")
         # evaluation of segmentation
-        seg_eval.evaluate_sample(mask, s)
+        seg_eval.evaluate_sample(g_segs, p_segs)
         # annotate segmentation
         file_prefix = f"{outdir}/seg-annotated/{name}"
-        annotate_segmentation(image, mask, s, file_prefix)
+        annotate_segmentation(image, g_segs, p_segs, file_prefix)
     # runtime for inference
     runtime = timeit.timeit(lambda: model.predict(val_ds_batch), number=1)
     ds_size = 0

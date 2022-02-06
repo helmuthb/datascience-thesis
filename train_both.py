@@ -2,46 +2,17 @@ from contextlib import redirect_stdout
 import os
 import argparse
 
-import tensorflow.keras.optimizers as optimizers
 import tensorflow as tf
-from tensorflow.keras.utils import custom_object_scope, plot_model
-from tensorflow.keras.callbacks import CSVLogger
-from tensorflow.keras.optimizers.schedules import LearningRateSchedule
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
+from tensorflow.keras.utils import plot_model
 from lib.augment import Augment
 
-from lib.deeplab import add_deeplab_features
-from lib.metrics import MeanAveragePrecisionMetric, MeanIoUMetric
 from lib.np_bbox_utils import BBoxUtils
 from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
-from lib.ssdlite import (
-    add_ssdlite_features, detection_head, get_default_boxes_cwh,
-    ssdlite_base_layers)
 from lib.tfr_utils import read_tfrecords
-from lib.losses import SSDLoss, DeeplabLoss
+from lib.losses import SSDLosses, DeeplabLoss
+from lib.combined import (
+    training_step, ssd_deeplab_model, combined_losses, CustomSchedule)
 import lib.rs19_classes as rs19
-
-
-class CustomSchedule(LearningRateSchedule):
-    """Custom schedule, based on the code in Transformer tutorial.
-    https://www.tensorflow.org/text/tutorials/transformer#optimizer
-    """
-    def __init__(self, peak_rate, warmup_steps):
-        super().__init__()
-        self.peak_rate = peak_rate
-        self.warmup_steps = warmup_steps
-        self.warmup_factor = warmup_steps ** -1.5
-
-    def get_config(self):
-        config = {}
-        config['peak_rate'] = self.peak_rate
-        config['warmup_steps'] = self.warmup_steps
-        return config
-
-    def __call__(self, step):
-        a1 = tf.math.rsqrt(step)
-        a2 = step * self.warmup_factor
-        return self.peak_rate * tf.math.minimum(a1, a2)
 
 
 def print_model(model, name, out_folder):
@@ -60,40 +31,6 @@ def print_model(model, name, out_folder):
     # create a plot
     plot_file = os.path.join(out_folder, name + '.png')
     plot_model(model, to_file=plot_file, show_dtype=True, show_shapes=True)
-
-
-def ssd_deeplab_model(size, n_det, n_seg):
-    """
-    """
-    input_layer = tf.keras.layers.Input(
-        shape=(size[0], size[1], 3))
-    # base model
-    base = MobileNetV2(
-        input_tensor=input_layer,
-        include_top=False)
-    # add deeplab layers
-    deeplab_output = add_deeplab_features(base, n_seg)
-    # add SSDlite layers
-    ext_base = add_ssdlite_features(base)
-    l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
-    # add class and location predictions
-    ssd_output = detection_head(n_det, l1, l2, l3, l4, l5, l6)
-    # create models
-    ssd_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=ssd_output
-    )
-    deeplab_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=deeplab_output
-    )
-    combined_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=[deeplab_output, ssd_output])
-    # calculate default boxes
-    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
-    # return combined model and the defaults
-    return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
 
 
 def main():
@@ -147,11 +84,6 @@ def main():
         type=float,
         default=1.0,
         help='Weight for DeepLab training (default = 1.0).'
-    )
-    parser.add_argument(
-        '--batches-per-epoch',
-        type=int,
-        help='Number of batches per epoch (default = full dataset).'
     )
     parser.add_argument(
         '--batch-size',
@@ -224,7 +156,6 @@ def main():
     augment = args.augment
     ssd_weight = args.ssd_weight
     deeplab_weight = args.deeplab_weight
-    batches_per_epoch = args.batches_per_epoch
     batch_size = args.batch_size
     debug = args.debug
     all_classes = args.all_classes
@@ -258,14 +189,7 @@ def main():
 
     # load model if fine tuning
     if in_model:
-        with custom_object_scope({
-                    'SSDLoss': SSDLoss,
-                    'DeeplabLoss': DeeplabLoss,
-                    'MeanIoUMetric': MeanIoUMetric,
-                    'MeanAveragePrecisionMetric': MeanAveragePrecisionMetric,
-                    'CustomSchedule': CustomSchedule,
-                }):
-            model = tf.keras.models.load_model(in_model)
+        model = tf.keras.models.load_model(in_model)
 
     # Freeze weights as requested
     if freeze_ssd:
@@ -289,51 +213,6 @@ def main():
         print_model(base, 'base', plot_dir)
         print_model(deeplab, 'deeplab', plot_dir)
         print_model(ssd, 'ssd', plot_dir)
-
-    # Loss functions
-    losses = {
-        "deeplab_output": DeeplabLoss(),
-        "ssd_output": SSDLoss(n_det),
-    }
-
-    # loss weights
-    lossWeights = {
-        "deeplab_output": deeplab_weight,
-        "ssd_output": ssd_weight
-    }
-
-    # compile combined model
-    metrics = None
-    if debug:
-        metrics = {
-            "deeplab_output": MeanIoUMetric(num_classes=n_seg),
-            "ssd_output": {
-                "map": MeanAveragePrecisionMetric(
-                    num_classes=n_det,
-                    default_boxes_cwh=default_boxes_cwh
-                ),
-                "neg_cls_loss": SSDLoss(n_det, "neg_cls_loss"),
-                "pos_cls_loss": SSDLoss(n_det, "pos_cls_loss"),
-                "pos_loc_loss": SSDLoss(n_det, "pos_loc_loss")
-            }
-        }
-    else:
-        metrics = {
-            "deeplab_output": MeanIoUMetric(num_classes=n_seg),
-            "ssd_output": MeanAveragePrecisionMetric(
-                num_classes=n_det,
-                default_boxes_cwh=default_boxes_cwh
-            )
-        }
-    # optimizer with custom schedule
-    schedule = CustomSchedule(learning_rate, warmup_steps)
-    model.compile(
-        optimizer=optimizers.Adam(learning_rate=schedule),
-        loss=losses,
-        loss_weights=lossWeights,
-        run_eagerly=False,
-        metrics=metrics
-    )
 
     # Load training & validation data
     train_ds_orig = read_tfrecords(
@@ -381,22 +260,52 @@ def main():
     train_ds_batch = train_ds.batch(batch_size=batch_size)
     val_ds_batch = val_ds.batch(batch_size=batch_size)
 
-    # prepare callbacks
-    callbacks = []
-    if logs:
-        callbacks.append(
-            CSVLogger(logs + '/history.csv', append=True, separator=';'))
+    # Loss functions
+    losses = combined_losses(SSDLosses(3), DeeplabLoss())
+    loss_weights = (ssd_weight, deeplab_weight)
+    # learning rate
+    lr_schedule = CustomSchedule(learning_rate, warmup_steps)
+    # Optimizer
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
     # perform training
-    model.fit(
-        train_ds_batch,
-        epochs=num_epochs,
-        steps_per_epoch=batches_per_epoch,
-        validation_data=val_ds_batch,
-        callbacks=callbacks)
+    for epoch in range(num_epochs):
+        avg_conf_loss = 0.0
+        avg_locs_loss = 0.0
+        avg_segs_loss = 0.0
+        for i, batch in enumerate(train_ds_batch):
+            img, gt = batch
+            _, c_l, l_l, s_l = training_step(
+                img, gt, model, losses, optimizer, loss_weights)
+            avg_conf_loss = (avg_conf_loss * i + c_l.numpy()) / (i + 1)
+            avg_locs_loss = (avg_locs_loss * i + l_l.numpy()) / (i + 1)
+            avg_segs_loss = (avg_segs_loss * i + s_l.numpy()) / (i + 1)
+            if i % 50 == 0:
+                print('Epoch: {} | C: {:.4f} L: {:.4f} S: {:.4f}'.format(
+                    epoch + 1, avg_conf_loss, avg_locs_loss, avg_segs_loss))
+        # validation run
+        val_conf_loss = 0.0
+        val_locs_loss = 0.0
+        val_segs_loss = 0.0
+        val_num = 0
+        for i, batch in enumerate(val_ds_batch):
+            img, gt = batch
+            _, c_l, l_l, s_l = training_step(
+                img, gt, model, losses, optimizer, loss_weights)
+            val_conf_loss += c_l.numpy()
+            val_locs_loss += l_l.numpy()
+            val_segs_loss += s_l.numpy()
+            val_num += 1
+        val_conf_loss /= val_num
+        val_locs_loss /= val_num
+        val_segs_loss /= val_num
+        print('Validation - Epoch: {} | C: {:.4f} L: {:.4f} S: {:.4f}'.format(
+            epoch+1, val_conf_loss, val_locs_loss, val_segs_loss
+        ))
 
-    # save resulting model
-    model.save(out_model)
+    # save model
+    if out_model:
+        model.save(out_model)
 
 
 if __name__ == '__main__':

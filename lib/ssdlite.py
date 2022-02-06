@@ -144,7 +144,7 @@ def detection_head(n_classes, *layers):
         )(bn)
         out_classes.append(reshape)
     # concatenate
-    classes = tf.keras.layers.Concatenate(axis=1, name='classes_concat')(
+    classes = tf.keras.layers.Concatenate(axis=1, name='ssd_conf_output')(
         out_classes
     )
     # softmax activation for classes
@@ -174,28 +174,11 @@ def detection_head(n_classes, *layers):
         )(bn)
         out_boxes.append(reshape)
     # concatenate
-    boxes = tf.keras.layers.Concatenate(axis=1, name='bbox_concat')(
+    boxes = tf.keras.layers.Concatenate(axis=1, name='ssd_bbox_output')(
         out_boxes
     )
-    # return bounding boxes & classes concatenated
-    return tf.keras.layers.Concatenate(name="ssd_output")([boxes, classes])
-
-
-def combine_boxes_classes(bboxes, classes, n_classes):
-    """Combine the bounding boxes and (sparse) classes in one tensor.
-    It will perform a one-hot encoding of the bounding boxes,
-    and concatenate the resulting tensor with the classes.
-    Args:
-        bboxes (tf.Tensor, [N, n_defaults, 4]): Tensor with bounding boxes.
-        classes (tf.Tensor, [N, n_defaults]): Dense tensor with classes.
-        n_classes (int): Number of classes.
-    Returns:
-        output (tf.Tensor, [N, n_defaults, 4+n_classes]): Combined tensor.
-    """
-    # one-hot encoding of classes
-    one_hot = tf.one_hot(classes, n_classes, dtype=tf.float32, axis=-1)
-    # return concatenation
-    return tf.concat([bboxes, one_hot], axis=-1)
+    # return bounding boxes & classes
+    return classes, boxes
 
 
 def get_default_boxes_cwh(*layers):
@@ -244,25 +227,11 @@ def ssdlite(input_shape, n_classes):
     print(base.summary())
     ext_base = add_ssdlite_features(base)
     l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
-    # add class and location predictions
-    prediction = detection_head(n_classes, l1, l2, l3, l4, l5, l6)
+    # add confidence and location predictions
+    conf, locs = detection_head(n_classes, l1, l2, l3, l4, l5, l6)
     # create model
-    model = tf.keras.Model(inputs=input_layer, outputs=prediction)
+    model = tf.keras.Model(inputs=input_layer, outputs=(locs, conf))
     # calculate default boxes
     default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
     # return both
     return model, default_boxes_cwh
-
-
-def get_predicted_boxes_cwh(pred_adj, defaults_cwh):
-    """Get the corrected boxes, based on the defaults and the predictions.
-    The default boxes (provided in center mode) and the predicted
-    adjustments are combined to get the predicted bounding boxes.
-
-    Args:
-        pred_adj (tensor): location predictions, as adjustments of
-            center and width / height.
-        defaults_cwh (np.ndarray): default boxes, in (cx/cy/w/h) format.
-    Returns:
-        pred_cwh (np.ndarray): default boxes.
-    """

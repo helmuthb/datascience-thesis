@@ -143,16 +143,16 @@ def img_from_example(example):
     image = tf.cast(tf.image.decode_jpeg(jpeg, channels=3), tf.float32)
     png = data['image/segmentation/mask']
     mask = tf.image.decode_png(png, channels=1)
+    # fetch classes
+    classes = data['image/object/class/label'].values
     # create bounding boxes
     x0_part = tf.expand_dims(data['image/object/bbox/xmin'].values, 1)
     y0_part = tf.expand_dims(data['image/object/bbox/ymin'].values, 1)
     x1_part = tf.expand_dims(data['image/object/bbox/xmax'].values, 1)
     y1_part = tf.expand_dims(data['image/object/bbox/ymax'].values, 1)
     bboxes = tf.concat([x0_part, y0_part, x1_part, y1_part], 1)
-    # fetch classes
-    classes = data['image/object/class/label'].values
     # return image, classes & bboxes
-    return image, bboxes, classes, mask, name
+    return image, classes, bboxes, mask, name
 
 
 def write_tfrecords(rows, out_file, num_shards, verbose=True):

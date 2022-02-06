@@ -232,48 +232,48 @@ class DetEval(object):
             ('class', 'i4'), ('score', 'f4')
         ])
 
-    def evaluate_sample(self, gt_box: np.ndarray, gt_cls: np.ndarray,
-                        pr_box: np.ndarray, pr_cls: np.ndarray,
-                        pr_scr: np.ndarray):
+    def evaluate_sample(self, gt_cl: np.ndarray, gt_xy: np.ndarray,
+                        pr_cl: np.ndarray, pr_sc: np.ndarray,
+                        pr_xy: np.ndarray):
         """Add the statistics for another sample to the evaluator.
 
         Args:
-            gt_box (np.ndarray(n1, 4)): Ground truth boxes.
-            gt_cls (np.ndarray(n1)): Ground truth classes.
-            pr_box (np.ndarray(n2, 4)): Predicted object boxes.
-            pr_cls (np.ndarray(n2)): Predicted object classes.
-            pr_scr (np.ndarray(n2)): Predicted object scores.
+            gt_cl (np.ndarray(n1)): Ground truth classes.
+            gt_xy (np.ndarray(n1, 4)): Ground truth boxes.
+            pr_cl (np.ndarray(n2)): Predicted object classes.
+            pr_sc (np.ndarray(n2)): Predicted object scores.
+            pr_xy (np.ndarray(n2, 4)): Predicted object boxes.
         """
         # reset the prepared numpy-arrays
         self.tp = None
         self.fp = None
         # get set of relevant classes
-        gt_classes = set(gt_cls.tolist())
-        pr_classes = set(pr_cls.tolist())
+        gt_classes = set(gt_cl.tolist())
+        pr_classes = set(pr_cl.tolist())
         # sort predictions by score (descending)
-        idxs = np.argsort(-pr_scr)
-        pr_scr = pr_scr[idxs]
-        pr_box = pr_box[idxs]
-        pr_cls = pr_cls[idxs]
+        idxs = np.argsort(-pr_sc)
+        pr_sc = pr_sc[idxs]
+        pr_xy = pr_xy[idxs]
+        pr_cl = pr_cl[idxs]
         # loop through all relevant classes
         for c in gt_classes.union(pr_classes):
             # ignore invalid classes
             if c < 0 or c >= self.num_classes:
                 continue
             # relevant groundtruth boxes
-            gt_c_box = gt_box[gt_cls == c]
+            gt_c_xy = gt_xy[gt_cl == c]
             # add to number of groundtruth boxes
-            self.gt_count[c] += len(gt_c_box)
+            self.gt_count[c] += len(gt_c_xy)
             # iterate through all predictions for this class
-            pr_mask = (pr_cls == c)
-            pr_c_box = pr_box[pr_mask]
-            pr_c_scr = pr_scr[pr_mask]
-            if len(gt_c_box) > 0:
+            pr_mask = (pr_cl == c)
+            pr_c_xy = pr_xy[pr_mask]
+            pr_c_sc = pr_sc[pr_mask]
+            if len(gt_c_xy) > 0:
                 # set of matched ground boxes so far
                 gt_matched = set()
                 # calculate intersections over union
-                iou = iou_xy(pr_c_box, gt_c_box, pairwise=False)
-                for i, scr in enumerate(pr_c_scr):
+                iou = iou_xy(pr_c_xy, gt_c_xy, pairwise=False)
+                for i, scr in enumerate(pr_c_sc):
                     # find ground truth with highest IoU
                     gt_idx = np.argmax(iou[i, :])
                     max_iou = iou[i, gt_idx]
@@ -287,7 +287,7 @@ class DetEval(object):
             else:
                 # no ground truth for this class - all predictions are
                 # false positives
-                for scr in pr_c_scr:
+                for scr in pr_c_sc:
                     self._fp[c].append(scr)
 
     def _prepare(self):

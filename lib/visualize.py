@@ -103,16 +103,17 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
     cv2.imwrite(file_prefix + "-pred.png", pred_img)
 
 
-def annotate_boxes(img: np.ndarray, b_xy: np.ndarray, b_cl: np.ndarray,
-                   b_sc: np.ndarray, classes: List[str], file_name: str):
+def annotate_boxes(img: np.ndarray,
+                   b_cl: np.ndarray, b_sc: np.ndarray, b_xy: np.ndarray,
+                   classes: List[str], file_name: str):
     """Annotate an image with the detected (or original) boxes.
     The resulting image is saved into the specified file name.
 
     Args:
         img (np.ndarray(width, height, 3): Image to annotate.
-        b_xy (np.ndarray [n, 4]): x0/y0/x1/y1 bounding boxes in [0, 1].
         b_cl (np.ndarray [n]): Classes corresponding to bounding boxes.
         b_sc (np.ndarray [n]): Class score for bounding boxes.
+        b_xy (np.ndarray [n, 4]): x0/y0/x1/y1 bounding boxes in [0, 1].
         classes (list[str]): List of class names.
         file_name (str): Name of the file where the result is saved to.
     """

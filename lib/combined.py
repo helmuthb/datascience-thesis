@@ -47,7 +47,7 @@ def combined_losses(ssd_f, deeplab_f):
     def _losses(gt, pr):
         ssd_losses = ssd_f(gt[0], gt[1], pr[0], pr[1])
         deeplab_loss = deeplab_f(gt[2], pr[2])
-        return *ssd_losses, deeplab_loss
+        return (*ssd_losses, deeplab_loss)
     return _losses
 
 
@@ -64,7 +64,7 @@ def training_step(img, gt, model, losses, optimizer, weights):
         loss += weight_loss
     delta = g.gradient(loss, model.trainable_variables)
     optimizer.apply_gradients(zip(delta, model.trainable_variables))
-    return loss, *batch_losses
+    return (loss, *batch_losses)
 
 
 class CustomSchedule(LearningRateSchedule):

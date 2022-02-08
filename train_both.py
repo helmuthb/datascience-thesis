@@ -1,13 +1,18 @@
-from contextlib import redirect_stdout
+import csv
 import os
+import time
 import argparse
+from numpy import infty
 
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
-from lib.augment import Augment
+from tqdm import tqdm
+from contextlib import redirect_stdout
 
-from lib.np_bbox_utils import BBoxUtils
-from lib.preprocess import preprocess, filter_classes_bbox, filter_classes_mask
+from lib.augment import Augment
+from lib.tf_bbox_utils import BBoxUtils
+from lib.preprocess import (
+    filter_empty_samples, preprocess, filter_classes_bbox, filter_classes_mask)
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import (
@@ -157,7 +162,6 @@ def main():
     ssd_weight = args.ssd_weight
     deeplab_weight = args.deeplab_weight
     batch_size = args.batch_size
-    debug = args.debug
     all_classes = args.all_classes
     freeze_base = args.freeze_base
     freeze_ssd = args.freeze_ssd
@@ -187,9 +191,18 @@ def main():
     deeplab_names = {layer.name for layer in deeplab.layers} - base_names
     ssd_names = {layer.name for layer in ssd.layers} - base_names
 
+    # epoch counter
+    epoch = 0
+
     # load model if fine tuning
     if in_model:
         model = tf.keras.models.load_model(in_model)
+        # read epoch file
+        try:
+            with open(f"{in_model}/epoch.txt") as f:
+                epoch = int(f.readline())
+        except OSError:
+            pass
 
     # Freeze weights as requested
     if freeze_ssd:
@@ -250,6 +263,10 @@ def main():
             filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
         )
 
+    # Filter out empty samples
+    train_ds_filtered = train_ds_filtered.filter(filter_empty_samples)
+    val_ds_filtered = val_ds_filtered.filter(filter_empty_samples)
+
     # Preprocess data
     train_ds = train_ds_filtered.map(
         preprocess((model_width, model_width), bbox_util, n_seg))
@@ -267,45 +284,90 @@ def main():
     lr_schedule = CustomSchedule(learning_rate, warmup_steps)
     # Optimizer
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    # optimizer = tf.keras.optimizers.Adam()
+
+    # open logfile
+    if logs:
+        csv_file = open(f"{logs}/history.csv", "a", newline="")
+        csv_writer = csv.writer(csv_file)
+
+    # minimum loss so far
+    min_loss = infty
 
     # perform training
-    for epoch in range(num_epochs):
-        avg_conf_loss = 0.0
-        avg_locs_loss = 0.0
-        avg_segs_loss = 0.0
+    for epoch in tqdm(range(epoch, epoch + num_epochs)):
+        out = [epoch+1]
+        train_conf_loss = 0.0
+        train_locs_loss = 0.0
+        train_segs_loss = 0.0
+        train_loss = 0.0
+        train_lr = 0.0
+        train_num = 0
+        start_time = time.time()
         for i, batch in enumerate(train_ds_batch):
             img, gt = batch
-            _, c_l, l_l, s_l = training_step(
+            l, c_l, l_l, s_l = training_step(
                 img, gt, model, losses, optimizer, loss_weights)
-            avg_conf_loss = (avg_conf_loss * i + c_l.numpy()) / (i + 1)
-            avg_locs_loss = (avg_locs_loss * i + l_l.numpy()) / (i + 1)
-            avg_segs_loss = (avg_segs_loss * i + s_l.numpy()) / (i + 1)
-            if i % 50 == 0:
-                print('Epoch: {} | C: {:.4f} L: {:.4f} S: {:.4f}'.format(
-                    epoch + 1, avg_conf_loss, avg_locs_loss, avg_segs_loss))
+            train_conf_loss += c_l.numpy()
+            train_locs_loss += l_l.numpy()
+            train_segs_loss += s_l.numpy()
+            train_loss += l.numpy()
+            train_lr += optimizer._decayed_lr(tf.float32).numpy()
+            train_num += 1
+        train_time = time.time() - start_time
+        train_conf_loss /= train_num
+        train_locs_loss /= train_num
+        train_segs_loss /= train_num
+        train_loss /= train_num
+        train_lr /= train_num
+        out += [train_time, train_loss, train_conf_loss, train_locs_loss,
+                train_segs_loss, train_lr]
         # validation run
         val_conf_loss = 0.0
         val_locs_loss = 0.0
         val_segs_loss = 0.0
+        val_loss = 0.0
         val_num = 0
+        start_time = time.time()
         for i, batch in enumerate(val_ds_batch):
             img, gt = batch
-            _, c_l, l_l, s_l = training_step(
-                img, gt, model, losses, optimizer, loss_weights)
+            pr = model(img)
+            l_list = losses(gt, pr)
+            c_l, l_l, s_l = l_list
             val_conf_loss += c_l.numpy()
             val_locs_loss += l_l.numpy()
             val_segs_loss += s_l.numpy()
             val_num += 1
+        val_time = time.time() - start_time
         val_conf_loss /= val_num
         val_locs_loss /= val_num
         val_segs_loss /= val_num
-        print('Validation - Epoch: {} | C: {:.4f} L: {:.4f} S: {:.4f}'.format(
-            epoch+1, val_conf_loss, val_locs_loss, val_segs_loss
-        ))
+        val_loss = ((val_conf_loss + val_locs_loss) * loss_weights[0] +
+                    val_segs_loss * loss_weights[1])
+        out += [val_time, val_loss, val_conf_loss, val_locs_loss,
+                val_segs_loss]
+        if logs:
+            csv_writer.writerow(out)
+            csv_file.flush()
+        # best model so far?
+        if (val_loss < min_loss) and out_model:
+            print(f"New minimum loss {val_loss} - saving model")
+            min_loss = val_loss
+            model.save(out_model)
+            # write epoch file
+            with open(f"{out_model}/epoch.txt", "w") as f:
+                f.write(str(epoch + 1))
+
+    # close log file
+    if logs:
+        csv_file.close()
 
     # save model
     if out_model:
         model.save(out_model)
+        # write epoch file
+        with open(f"{out_model}/epoch.txt", "w") as f:
+            f.write(str(epoch + 1))
 
 
 if __name__ == '__main__':

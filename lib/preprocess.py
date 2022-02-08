@@ -7,7 +7,7 @@ Preprocessing of images for SSD.
 import tensorflow as tf
 from typing import Tuple, List
 
-from .np_bbox_utils import BBoxUtils
+from .tf_bbox_utils import BBoxUtils
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -41,6 +41,10 @@ def class_indices(classes: List[str], subset: List[List]) -> List[int]:
         # Append index to list of indices
         indices.append(idx)
     return indices
+
+
+def filter_empty_samples(image, boxes_cl, boxes_xy, mask, name):
+    return tf.math.greater(tf.shape(boxes_cl)[0], tf.constant(0))
 
 
 def filter_classes_bbox(classes: List[str], subset: List[List]):
@@ -111,19 +115,13 @@ def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
         n_seg (int): Number of classes used for segmentation.
 """
 
-    def _preprocess(image, boxes_cl, boxes_xy, mask):
+    def _preprocess(image, boxes_cl, boxes_xy, mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # scale image color values to [0, 1] range
         image = tf.clip_by_value(image / 255, 0., 1.)
-        # to numpy for classes and boxes
-        boxes_cl = boxes_cl.numpy()
-        boxes_xy = boxes_xy.numpy()
         # map defaults to boxes
         gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
-        # ground truth as tensor
-        gt_clss = tf.convert_to_tensor(gt_clss, dtype=tf.int32)
-        gt_locs = tf.convert_to_tensor(gt_locs, dtype=tf.float32)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -132,16 +130,6 @@ def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
         mask = tf.clip_by_value(mask, 0, n_seg-1)
         mask = tf.cast(mask, tf.uint8)
         # return preprocessed image & data
-        return image, gt_clss, gt_locs, mask
-
-    def _preprocess_wrap(image, boxes_cl, boxes_xy, mask, name):
-        image, gt_clss, gt_locs, mask = tf.py_function(
-            _preprocess,
-            (image, boxes_cl, boxes_xy, mask),
-            (tf.float32, tf.int32, tf.float32, tf.uint8)
-        )
-        image.set_shape([size[0], size[1], 3])
-        mask.set_shape([size[0], size[1]])
         return image, (gt_clss, gt_locs, mask)
 
-    return _preprocess_wrap
+    return _preprocess

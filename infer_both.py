@@ -7,8 +7,9 @@ import cv2
 
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
-    preprocess, filter_classes_bbox, filter_classes_mask, subset_names)
-from lib.np_bbox_utils import BBoxUtils, to_cwh
+    filter_empty_samples, preprocess, filter_classes_bbox,
+    filter_classes_mask, subset_names)
+from lib.tf_bbox_utils import BBoxUtils, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation
@@ -91,10 +92,10 @@ def main():
 
     # build model
     models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
-    model, default_boxes_cwh, base, deeplab, ssd = models
+    model, default_boxes_cw, base, deeplab, ssd = models
 
     # Bounding box utility object
-    bbox_util = BBoxUtils(n_det, default_boxes_cwh, min_confidence=0.01)
+    bbox_util = BBoxUtils(n_det, default_boxes_cw, min_confidence=0.01)
 
     # Load validation data
     val_ds_orig = read_tfrecords(
@@ -110,6 +111,9 @@ def main():
         val_ds_filtered = val_ds_filtered_det.map(
             filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
         )
+
+    # Filter out empty samples
+    val_ds_filtered = val_ds_filtered.filter(filter_empty_samples)
 
     # Preprocess data
     val_ds = val_ds_filtered.map(
@@ -131,7 +135,7 @@ def main():
     for p_conf, p_locs, p_segs, o in zip(pr_conf, pr_locs, pr_segs, i_origs):
         image, g_cl, g_xy, g_segs, name = o
         name = name.decode('utf-8')
-        p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
+        p_cl, p_sc, p_xy = bbox_util.pred_to_boxes_np(p_conf, p_locs)
         det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
         g_xy = g_xy.copy()
         g_xy[:, 0] *= image_width
@@ -148,13 +152,13 @@ def main():
         file_name = f"{outdir}/pred-annotated/{name}.jpg"
         annotate_boxes(image, p_cl, p_sc, p_xy, det_names, file_name)
         # create output file for evaluation
-        p_cwh = to_cwh(p_xy)
+        p_cw = to_cw(p_xy)
         with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
-            for i, cwh in enumerate(p_cwh):
+            for i, cw in enumerate(p_cw):
                 xy = p_xy[i]
                 cl = p_cl[i].item()
                 sc = p_sc[i].item()
-                b_str = " ".join([str(b) for b in cwh])
+                b_str = " ".join([str(b) for b in cw])
                 b2_str = " ".join([str(b) for b in xy])
                 f.write(f"{cl} {sc} {b_str}\n")
                 f.write(f"# XY: {cl} {sc} {b2_str}\n")

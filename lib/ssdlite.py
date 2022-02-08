@@ -206,7 +206,7 @@ def get_default_boxes_cwh(*layers):
                 additional_scale = 1.
             boxes.append([x, y, additional_scale, additional_scale])
     # clip the result
-    return np.clip(boxes, 0., 1.)
+    return tf.convert_to_tensor(np.clip(boxes, 0., 1.), dtype=tf.float32)
 
 
 def ssdlite(input_shape, n_classes):

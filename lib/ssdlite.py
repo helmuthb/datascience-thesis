@@ -181,7 +181,7 @@ def detection_head(n_classes, *layers):
     return classes, boxes
 
 
-def get_default_boxes_cwh(*layers):
+def get_default_boxes_cw(*layers):
     """Get the default bounding boxes for the given layers.
     """
     boxes = []
@@ -232,6 +232,6 @@ def ssdlite(input_shape, n_classes):
     # create model
     model = tf.keras.Model(inputs=input_layer, outputs=(locs, conf))
     # calculate default boxes
-    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
+    default_boxes_cw = get_default_boxes_cw(l1, l2, l3, l4, l5, l6)
     # return both
-    return model, default_boxes_cwh
+    return model, default_boxes_cw

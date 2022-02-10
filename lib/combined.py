@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 
 from lib.ssdlite import (
-    add_ssdlite_features, detection_head, get_default_boxes_cwh,
+    add_ssdlite_features, detection_head, get_default_boxes_cw,
     ssdlite_base_layers)
 from lib.deeplab import add_deeplab_features
 
@@ -37,9 +37,9 @@ def ssd_deeplab_model(size, n_det, n_seg):
         inputs=input_layer,
         outputs=combined_outputs)
     # calculate default boxes
-    default_boxes_cwh = get_default_boxes_cwh(l1, l2, l3, l4, l5, l6)
+    default_boxes_cw = get_default_boxes_cw(l1, l2, l3, l4, l5, l6)
     # return combined model and the defaults
-    return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
+    return combined_model, default_boxes_cw, base, deeplab_model, ssd_model
 
 
 def loss_list(ssd_f, deeplab_f, ssd_only, deeplab_only):

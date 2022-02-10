@@ -4,22 +4,22 @@
 import numpy as np
 import pytest
 
-from ..np_bbox_utils import (boxes_decode_cwh, map_defaults_xy,
-                             non_maximum_suppression_xy, to_cwh, to_xy,
-                             intersection_xy, iou_xy, one_box_encode_cwh,
-                             one_box_decode_cwh, one_row_gt_cwh)
+from ..np_bbox_utils import (boxes_decode_cw, map_defaults_xy,
+                             non_maximum_suppression_xy, to_cw, to_xy,
+                             intersection_xy, iou_xy, one_box_encode_cw,
+                             one_box_decode_cw, one_row_gt_cw)
 
 
-def test_one_to_cwh():
+def test_one_to_cw():
     xy_bbox = np.array([.1, .25, .5, .75])
-    cwh_bbox = to_cwh(xy_bbox)
-    assert cwh_bbox[0] == pytest.approx(0.3)
-    assert cwh_bbox[1] == pytest.approx(0.5)
-    assert cwh_bbox[2] == pytest.approx(0.4)
-    assert cwh_bbox[3] == pytest.approx(0.5)
+    cw_bbox = to_cw(xy_bbox)
+    assert cw_bbox[0] == pytest.approx(0.3)
+    assert cw_bbox[1] == pytest.approx(0.5)
+    assert cw_bbox[2] == pytest.approx(0.4)
+    assert cw_bbox[3] == pytest.approx(0.5)
 
 
-def test_multiple_to_cwh():
+def test_multiple_to_cw():
     from numpy.random import default_rng
     rng = default_rng()
     boxes = []
@@ -32,20 +32,20 @@ def test_multiple_to_cwh():
         if vals[1] > vals[3]:
             vals[1], vals[3] = vals[3], vals[1]
         boxes.append(vals)
-        # create cwh box
-        boxes1.append(to_cwh(np.array(vals)))
+        # create cw box
+        boxes1.append(to_cw(np.array(vals)))
     xy_boxes = np.array(boxes)
-    cwh_boxes = to_cwh(xy_boxes)
+    cw_boxes = to_cw(xy_boxes)
     for i in range(10):
-        assert cwh_boxes[i, 0] == pytest.approx(boxes1[i][0])
-        assert cwh_boxes[i, 1] == pytest.approx(boxes1[i][1])
-        assert cwh_boxes[i, 2] == pytest.approx(boxes1[i][2])
-        assert cwh_boxes[i, 3] == pytest.approx(boxes1[i][3])
+        assert cw_boxes[i, 0] == pytest.approx(boxes1[i][0])
+        assert cw_boxes[i, 1] == pytest.approx(boxes1[i][1])
+        assert cw_boxes[i, 2] == pytest.approx(boxes1[i][2])
+        assert cw_boxes[i, 3] == pytest.approx(boxes1[i][3])
 
 
 def test_one_to_xy():
-    cwh_bbox = np.array([.3, .5, .4, .5])
-    xy_bbox = to_xy(cwh_bbox)
+    cw_bbox = np.array([.3, .5, .4, .5])
+    xy_bbox = to_xy(cw_bbox)
     assert xy_bbox[0] == pytest.approx(0.1)
     assert xy_bbox[1] == pytest.approx(0.25)
     assert xy_bbox[2] == pytest.approx(0.5)
@@ -67,8 +67,8 @@ def test_multiple_to_xy():
         boxes.append(vals)
         # create xy box
         boxes1.append(to_xy(np.array(vals)))
-    cwh_boxes = np.array(boxes)
-    xy_boxes = to_xy(cwh_boxes)
+    cw_boxes = np.array(boxes)
+    xy_boxes = to_xy(cw_boxes)
     for i in range(10):
         assert xy_boxes[i, 0] == pytest.approx(boxes1[i][0])
         assert xy_boxes[i, 1] == pytest.approx(boxes1[i][1])
@@ -178,15 +178,15 @@ def test_adjust():
         [.45, .45, .55, .55],  # box in the center
         [.45, .45, .75, .75],  # box right-bottom
     ])
-    # calculate cwh boxes
-    defaults_cwh = to_cwh(defaults_xy)
-    boxes_cwh = to_cwh(boxes_xy)
+    # calculate cw boxes
+    defaults_cw = to_cw(defaults_xy)
+    boxes_cw = to_cw(boxes_xy)
     # calculate all distortions
-    dist = [one_box_encode_cwh(a, b) for a, b in zip(defaults_cwh, boxes_cwh)]
+    dist = [one_box_encode_cw(a, b) for a, b in zip(defaults_cw, boxes_cw)]
     # calculate all (hopefully) original boxes
-    b2_cwh = np.array(
-        [one_box_decode_cwh(a, d) for a, d in zip(defaults_cwh, dist)])
-    b2b_cwh = boxes_decode_cwh(defaults_cwh, np.array(dist))
+    b2_cw = np.array(
+        [one_box_decode_cw(a, d) for a, d in zip(defaults_cw, dist)])
+    b2b_cw = boxes_decode_cw(defaults_cw, np.array(dist))
     # 1st case - identical boxes: distortion = 0
     assert np.all(dist[0] == 0.)
     # 2nd case - box a bit smaller than default
@@ -204,8 +204,8 @@ def test_adjust():
     assert dist[2][2] == pytest.approx(0.)
     assert dist[2][3] == pytest.approx(0.)
     # check whether boxes were reconstructed
-    assert np.all(boxes_cwh == pytest.approx(b2_cwh))
-    assert np.all(boxes_cwh == pytest.approx(b2b_cwh))
+    assert np.all(boxes_cw == pytest.approx(b2_cw))
+    assert np.all(boxes_cw == pytest.approx(b2b_cw))
 
 
 def test_one_row():
@@ -219,13 +219,13 @@ def test_one_row():
         [.45, .45, .55, .55],  # box in the center
         [.45, .45, .75, .75],  # box right-bottom
     ])
-    defaults_cwh = to_cwh(defaults_xy)
-    boxes_cwh = to_cwh(boxes_xy)
+    defaults_cw = to_cw(defaults_xy)
+    boxes_cw = to_cw(boxes_xy)
     clses = [-1, 0, 1]
     n_classes = 10
     # calculate all rows
-    rows = [one_row_gt_cwh(a, b, c, n_classes)
-            for a, b, c in zip(defaults_cwh, boxes_cwh, clses)]
+    rows = [one_row_gt_cw(a, b, c, n_classes)
+            for a, b, c in zip(defaults_cw, boxes_cw, clses)]
     # all rows have shape (n_classes+4,)
     for r in rows:
         assert r.shape == (n_classes+4,)

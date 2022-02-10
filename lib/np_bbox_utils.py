@@ -19,7 +19,7 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def to_cwh(box_xy):
+def to_cw(box_xy):
     """Convert from x0/y0/x1/y1 to cx/cy/w/h.
     The first format is used in the ground truth, the
     second format is used in the neural network.
@@ -30,7 +30,7 @@ def to_cwh(box_xy):
     Args:
         box_xy (np.ndarray [..., 4]): x0/y0/x1/y1 bounding box.
     Returns:
-        box_cwh (np.ndarray [..., 4]): cx/cy/w/h bounding box.
+        box_cw (np.ndarray [..., 4]): cx/cy/w/h bounding box.
     """
     # Added "None" to keep the dimension we are indexing
     x0 = box_xy[..., None, 0]
@@ -44,20 +44,20 @@ def to_cwh(box_xy):
     return np.hstack([cx, cy, w, h])
 
 
-def to_xy(box_cwh):
+def to_xy(box_cw):
     """Convert from cx/cy/w/h to x0/y0/x1/y1.
     The first format is used in the neural network, the
     second format is used in the ground truth.
 
     Args:
-        box_cwh (np.ndarray [..., 4]): cx/cy/w/h bounding box.
+        box_cw (np.ndarray [..., 4]): cx/cy/w/h bounding box.
     Returns:
         box_xy (np.ndarray [..., 4]): x0/y0/x1/y1 bounding box.
     """
-    cx = box_cwh[..., None, 0]
-    cy = box_cwh[..., None, 1]
-    w = box_cwh[..., None, 2]
-    h = box_cwh[..., None, 3]
+    cx = box_cw[..., None, 0]
+    cy = box_cw[..., None, 1]
+    w = box_cw[..., None, 2]
+    h = box_cw[..., None, 3]
     x0 = cx - w/2
     y0 = cy - h/2
     x1 = x0 + w
@@ -160,7 +160,7 @@ class BBoxUtils(object):
     NMS step is stored in the object.
     """
 
-    def __init__(self, n_classes, default_boxes_cwh,
+    def __init__(self, n_classes, default_boxes_cw,
                  variances=(.1, .1, .2, .2), min_pos_iou=.05,
                  max_neg_iou=.03, min_area=0.00001, min_confidence=0.2,
                  iou_threshold=0.45, top_k=400):
@@ -172,7 +172,7 @@ class BBoxUtils(object):
             n_classes (int): Number of distinct classes.
             variances (np.ndarray[4]): Factors to scale the distortion.
             min_area (float): Minimum area of a box.
-            default_boxes_cwh (np.ndarray [n1, 4]): List of default boxes.
+            default_boxes_cw (np.ndarray [n1, 4]): List of default boxes.
             min_pos_iou (float): Minimum IoU value for mapping default boxes
                 not assigned as optimal.
             max_neg_iou (float): Maximum IoU value for mapping to background.
@@ -184,9 +184,9 @@ class BBoxUtils(object):
             top_k (float): Maximum number of default boxes to keep.
         """
         self.n_classes = n_classes
-        self.default_boxes_cwh = default_boxes_cwh
-        self.default_boxes_xy = to_xy(default_boxes_cwh)
-        self.n_default_boxes = default_boxes_cwh.shape[0]
+        self.default_boxes_cw = default_boxes_cw
+        self.default_boxes_xy = to_xy(default_boxes_cw)
+        self.n_default_boxes = default_boxes_cw.shape[0]
         self.variances = variances
         self.min_pos_iou = min_pos_iou
         self.max_neg_iou = max_neg_iou
@@ -195,7 +195,7 @@ class BBoxUtils(object):
         self.iou_threshold = iou_threshold
         self.top_k = top_k
 
-    def _one_box_encode_cwh(self, default_box_cwh, bbox_cwh):
+    def _one_box_encode_cw(self, default_box_cw, bbox_cw):
         """Calculate distortion needed for adjusting default to bounding box.
         This calculates the delta in x/y of the center, and the
         delta factor in extending/shrinking the width/height of
@@ -205,78 +205,78 @@ class BBoxUtils(object):
         In addition they are all divided by the variances for scaling.
 
         Args:
-            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
-            bbox_cwh (np.ndarray[4]): Box in cx/cy/w/h.
+            default_box_cw (np.ndarray[4]): Default box in cx/cy/w/h.
+            bbox_cw (np.ndarray[4]): Box in cx/cy/w/h.
         Returns:
             distort (np.ndarray[4]): dx/dy of the center, fw/fh of the size,
                 scaled by width & variances, logarithmic for factor.
         """
         # center: subtract, ...
-        c_delta = bbox_cwh[0:2]-default_box_cwh[0:2]
+        c_delta = bbox_cw[0:2]-default_box_cw[0:2]
         # ... then scale by default box width/height
-        c_delta = c_delta / default_box_cwh[2:4]
+        c_delta = c_delta / default_box_cw[2:4]
         # width/height: logarithm of quotient
-        wh_delta = np.log(bbox_cwh[2:4]/default_box_cwh[2:4])
+        wh_delta = np.log(bbox_cw[2:4]/default_box_cw[2:4])
         delta = np.concatenate((c_delta, wh_delta))
         return delta / self.variances
 
-    def _one_box_decode_cwh(self, default_box_cwh, distort):
+    def _one_box_decode_cw(self, default_box_cw, distort):
         """Calculate bounding box back from distortion of default box.
         This calculates the bounding box coordinates back from the distortion
         needed to the default boz, by inverting the operations done in
-        `_one_box_encode_cwh`.
+        `_one_box_encode_cw`.
 
         Args:
-            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
+            default_box_cw (np.ndarray[4]): Default box in cx/cy/w/h.
             distort (np.ndarray[4]): Distortion as used in the network.
         Returns:
-            bbox_cwh (np.ndarray[4]): Bounding box in cx/cy/w/h.
+            bbox_cw (np.ndarray[4]): Bounding box in cx/cy/w/h.
         """
         # reverse adjustment of default
         delta = distort * self.variances
-        d_xy = delta[0:2] * default_box_cwh[2:4]
-        f_wh = np.exp(delta[2:4]) * default_box_cwh[2:4]
-        # get box cwh coordinates
-        box_cwh = np.concatenate((default_box_cwh[0:2]+d_xy, f_wh))
-        return box_cwh
+        d_xy = delta[0:2] * default_box_cw[2:4]
+        f_wh = np.exp(delta[2:4]) * default_box_cw[2:4]
+        # get box cw coordinates
+        box_cw = np.concatenate((default_box_cw[0:2]+d_xy, f_wh))
+        return box_cw
 
-    def _one_row_gt_locs(self, cls, default_box_cwh, bbox_cwh):
+    def _one_row_gt_locs(self, cls, default_box_cw, bbox_cw):
         """Get one row of ground truth for a default, bounding box, and class.
 
         Args:
             cls (int): Class of box, -1 if neutral.
-            default_box_cwh (np.ndarray[4]): Default box in cx/cy/w/h.
-            bbox_cwh (np.ndarray[4]): Bounding box in cx/cy/w/h.
+            default_box_cw (np.ndarray[4]): Default box in cx/cy/w/h.
+            bbox_cw (np.ndarray[4]): Bounding box in cx/cy/w/h.
         Returns:
-            row_cwh (np.ndarray[n_classes+4]): Ground truth
+            row_cw (np.ndarray[n_classes+4]): Ground truth
                 row for the one bounding box assigned to the one default box.
                 It starts with the classes one-hot encoded and
                 ends with the bounding box adjustments.
         """
         if cls == -1:
             return np.zeros((4))
-        return self._one_box_encode_cwh(default_box_cwh, bbox_cwh)
+        return self._one_box_encode_cw(default_box_cw, bbox_cw)
 
-    def boxes_decode_cwh(self, distorts):
+    def boxes_decode_cw(self, distorts):
         """Calculate bounding box back from distortion of default box.
         This calculates the box coordinates back from the distortion needed
         to the default box, by inverting the operations done in
-        `_one_box_encode_cwh`.
+        `_one_box_encode_cw`.
 
         Args:
             distorts (np.ndarray[n, n2, 4]): Distortion as predicted.
         Returns:
-            bboxes_cwh (np.ndarray[n, n2, 4]): Bounding boxes.
+            bboxes_cw (np.ndarray[n, n2, 4]): Bounding boxes.
         """
         # reverse adjustment of default
         delta = distorts * self.variances
-        d_xy = delta[..., 0:2] * self.default_boxes_cwh[..., 2:4]
-        f_wh = np.exp(delta[..., 2:4]) * self.default_boxes_cwh[..., 2:4]
-        # get box cwh coordinates
-        bboxes_cwh = np.concatenate(
-            (self.default_boxes_cwh[..., 0:2]+d_xy, f_wh),
+        d_xy = delta[..., 0:2] * self.default_boxes_cw[..., 2:4]
+        f_wh = np.exp(delta[..., 2:4]) * self.default_boxes_cw[..., 2:4]
+        # get box cw coordinates
+        bboxes_cw = np.concatenate(
+            (self.default_boxes_cw[..., 0:2]+d_xy, f_wh),
             axis=-1)
-        return bboxes_cwh
+        return bboxes_cw
 
     def _skip_small_boxes_xy(self, boxes_cl, bboxes_xy):
         """Skip bounding boxes where area is smaller than min_area.
@@ -349,8 +349,8 @@ class BBoxUtils(object):
             gt_clss[mapped_default] = cl
             gt_locs[mapped_default] = self._one_row_gt_locs(
                 cl,
-                self.default_boxes_cwh[mapped_default],
-                to_cwh(bboxes_xy[mapped_box]),
+                self.default_boxes_cw[mapped_default],
+                to_cw(bboxes_xy[mapped_box]),
             )
             # take default out from next rounds
             iou_vals[mapped_default, :] = 0.
@@ -365,8 +365,8 @@ class BBoxUtils(object):
                 gt_clss[default_box] = cl
                 gt_locs[default_box] = self._one_row_gt_locs(
                     cl,
-                    self.default_boxes_cwh[default_box],
-                    to_cwh(bboxes_xy[max_bboxes[default_box]]),
+                    self.default_boxes_cw[default_box],
+                    to_cw(bboxes_xy[max_bboxes[default_box]]),
                 )
             # alternatively is it above the negative-threshold?
             elif max_iou[default_box] > self.max_neg_iou:
@@ -374,8 +374,8 @@ class BBoxUtils(object):
                 gt_clss[default_box] = 0
                 gt_locs[default_box] = self._one_row_gt_locs(
                     -1,
-                    self.default_cwh[default_box],
-                    to_cwh(bboxes_xy[max_bboxes[default_box]]),
+                    self.default_cw[default_box],
+                    to_cw(bboxes_xy[max_bboxes[default_box]]),
                 )
         return gt_clss, gt_locs
 
@@ -399,7 +399,7 @@ class BBoxUtils(object):
         if bboxes_xy.ndim == 1:
             bboxes_xy = np.expand_dims(bboxes_xy, 0)
         boxes_cl, bboxes_xy = self._skip_small_boxes_xy(boxes_cl, bboxes_xy)
-        bboxes_cwh = to_cwh(bboxes_xy)
+        bboxes_cw = to_cw(bboxes_xy)
         # initialize n1, n2
         n1 = self.n_default_boxes
         n2 = bboxes_xy.shape[0]
@@ -422,8 +422,8 @@ class BBoxUtils(object):
             gt_clss[default_box] = cl
             gt_locs[default_box] = self._one_row_gt_locs(
                 cl,
-                self.default_boxes_cwh[default_box],
-                bboxes_cwh[bbox],
+                self.default_boxes_cw[default_box],
+                bboxes_cw[bbox],
             )
         # step 2: find for each default the box with maximum IoU
         aux_default_boxes = np.argmax(iou_vals, axis=1)
@@ -435,16 +435,16 @@ class BBoxUtils(object):
                 gt_clss[default_box] = cl
                 gt_locs[default_box] = self._one_row_gt_locs(
                     cl,
-                    self.default_boxes_cwh[default_box],
-                    bboxes_cwh[bbox],
+                    self.default_boxes_[default_box],
+                    bboxes_cw[bbox],
                 )
             elif iou_vals[default_box, bbox] > self.max_neg_iou:
                 # add them as neutral
                 gt_clss[default_box] = 0
                 gt_locs[default_box] = self._one_row_gt_locs(
                     -1,
-                    self.default_boxes_cwh[default_box],
-                    bboxes_cwh[bbox],
+                    self.default_boxes_cw[default_box],
+                    bboxes_cw[bbox],
                 )
         return gt_clss, gt_locs
 
@@ -510,8 +510,8 @@ class BBoxUtils(object):
             boxes_xy (np.ndarray(n2, 4)): boxes predicted from network.
         """
         # get boxes from default-box adjustments
-        p_boxes_cwh = self.boxes_decode_cwh(pr_locs)
-        p_boxes_xy = to_xy(p_boxes_cwh)
+        p_boxes_cw = self.boxes_decode_cw(pr_locs)
+        p_boxes_xy = to_xy(p_boxes_cw)
         # loop through the classes
         n_classes = pr_conf.shape[-1]
         # results

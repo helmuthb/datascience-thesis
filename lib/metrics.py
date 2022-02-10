@@ -44,7 +44,7 @@ class MeanIoUMetric(MeanIoU):
 class MeanAveragePrecisionMetric(Metric):
     """Keras implementation of mean average precision for object detection.
     """
-    def __init__(self, num_classes, default_boxes_cwh, iou_threshold=0.5,
+    def __init__(self, num_classes, default_boxes_cw, iou_threshold=0.5,
                  name='map', **kwargs):
         """Create a metric object.
         It requires the number of detection classes to be used and the set
@@ -52,7 +52,7 @@ class MeanAveragePrecisionMetric(Metric):
 
         Args:
             num_classes (int): Number of detection classes in the model.
-            default_boxes_cwh (np.ndarray [n1, 4]): List of default boxes.
+            default_boxes_cw (np.ndarray [n1, 4]): List of default boxes.
             iou_threshold (float): Minimum intersection over union for
                 considering a prediction a match for a ground truth box.
             name (string): Name of the metric object, by default set to
@@ -60,9 +60,9 @@ class MeanAveragePrecisionMetric(Metric):
         """
         super().__init__(name=name, **kwargs)
         self.num_classes = num_classes
-        self.default_boxes_cwh = default_boxes_cwh
+        self.default_boxes_cw = default_boxes_cw
         self.iou_threshold = iou_threshold
-        self.bbox_util = BBoxUtils(num_classes, np.array(default_boxes_cwh))
+        self.bbox_util = BBoxUtils(num_classes, np.array(default_boxes_cw))
         # collect the predictions: score value if matched, 0 if not
         # organized as dict with the class as index
         self.match_scores = defaultdict(list)
@@ -82,7 +82,7 @@ class MeanAveragePrecisionMetric(Metric):
         """
         config = super().get_config()
         config['num_classes'] = self.num_classes
-        config['default_boxes_cwh'] = self.default_boxes_cwh
+        config['default_boxes_cw'] = self.default_boxes_cw
         config['iou_threshold'] = self.iou_threshold
         return config
 

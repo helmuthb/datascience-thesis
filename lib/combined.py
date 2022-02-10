@@ -1,6 +1,5 @@
 import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
-from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 
 from lib.ssdlite import (
     add_ssdlite_features, detection_head, get_default_boxes_cwh,
@@ -43,47 +42,76 @@ def ssd_deeplab_model(size, n_det, n_seg):
     return combined_model, default_boxes_cwh, base, deeplab_model, ssd_model
 
 
-def combined_losses(ssd_f, deeplab_f):
-    def _losses(gt, pr):
+def loss_list(ssd_f, deeplab_f, ssd_only, deeplab_only):
+    def _losses_combined(gt, pr):
         ssd_losses = ssd_f(gt[0], gt[1], pr[0], pr[1])
         deeplab_loss = deeplab_f(gt[2], pr[2])
         return (*ssd_losses, deeplab_loss)
-    return _losses
+
+    def _losses_ssd(gt, pr):
+        return ssd_f(gt[0], gt[1], pr[0], pr[1])
+
+    def _losses_deeplab(gt, pr):
+        return (deeplab_f(gt, pr),)
+
+    if ssd_only:
+        return _losses_ssd
+    elif deeplab_only:
+        return _losses_deeplab
+    else:
+        return _losses_combined
 
 
-@tf.function
-def training_step(img, gt, model, losses, optimizer, weights):
-    with tf.GradientTape() as g:
-        pr = model(img)
-        batch_losses = losses(gt, pr)
-        loss = (weights[0] * (batch_losses[0] + batch_losses[1]) +
-                weights[1] * batch_losses[2])
-        # weight decay
-        weight_loss = [tf.nn.l2_loss(w) for w in model.trainable_variables]
-        weight_loss = 5e-4 * tf.reduce_sum(weight_loss)
-        loss += weight_loss
-    delta = g.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(delta, model.trainable_variables))
-    return (loss, *batch_losses)
+def get_training_step(model, losses, weights, optimizer, ssd_only,
+                      deeplab_only, alpha=5e-4):
+    w = tf.convert_to_tensor(weights, dtype=tf.float32)
+    a = tf.convert_to_tensor(alpha, dtype=tf.float32)
 
+    @tf.function
+    def _step1(img, gt):
+        with tf.GradientTape() as tape:
+            pr = model(img)
+            ll = losses(gt, pr)
+            loss = w[0] * ll[0]
+            # weight decay
+            weight_loss = [tf.nn.l2_loss(w) for w in model.trainable_variables]
+            weight_loss = a * tf.reduce_sum(weight_loss)
+            loss += weight_loss
+        delta = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(delta, model.trainable_variables))
+        return (loss, *ll)
 
-class CustomSchedule(LearningRateSchedule):
-    """Custom schedule, based on the code in Transformer tutorial.
-    https://www.tensorflow.org/text/tutorials/transformer#optimizer
-    """
-    def __init__(self, peak_rate, warmup_steps):
-        super().__init__()
-        self.peak_rate = peak_rate
-        self.warmup_steps = warmup_steps
-        self.warmup_factor = warmup_steps ** -1.5
+    @tf.function
+    def _step2(img, gt):
+        with tf.GradientTape() as tape:
+            pr = model(img)
+            ll = losses(gt, pr)
+            loss = w[0] * ll[0] + w[1] * ll[1]
+            # weight decay
+            weight_loss = [tf.nn.l2_loss(w) for w in model.trainable_variables]
+            weight_loss = alpha * tf.reduce_sum(weight_loss)
+            loss += weight_loss
+        delta = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(delta, model.trainable_variables))
+        return (loss, *ll)
 
-    def get_config(self):
-        config = {}
-        config['peak_rate'] = self.peak_rate
-        config['warmup_steps'] = self.warmup_steps
-        return config
+    @tf.function
+    def _step3(img, gt):
+        with tf.GradientTape() as tape:
+            pr = model(img)
+            ll = losses(gt, pr)
+            loss = w[0] * ll[0] + w[1] * ll[1] + w[2] * ll[2]
+            # weight decay
+            weight_loss = [tf.nn.l2_loss(w) for w in model.trainable_variables]
+            weight_loss = alpha * tf.reduce_sum(weight_loss)
+            loss += weight_loss
+        delta = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(delta, model.trainable_variables))
+        return (loss, *ll)
 
-    def __call__(self, step):
-        a1 = tf.math.rsqrt(step)
-        a2 = step * self.warmup_factor
-        return self.peak_rate * tf.math.minimum(a1, a2)
+    if ssd_only:
+        return _step2
+    elif deeplab_only:
+        return _step1
+    else:
+        return _step3

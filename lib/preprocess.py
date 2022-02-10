@@ -111,11 +111,38 @@ def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
 
     Args:
         size (tuple(int)): Target image size.
-        bbox_util (BBoxUtils): Bounding box utility class.
-        n_seg (int): Number of classes used for segmentation.
+        bbox_util (BBoxUtils): Bounding box utility class - None for no
+            object detection.
+        n_seg (int): Number of classes used for segmentation - 0 for no
+            image segmentation.
 """
 
-    def _preprocess(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_ssd(image, boxes_cl, boxes_xy, mask, name):
+        # resize image
+        image = tf.image.resize(image, size, antialias=True)
+        # scale image color values to [0, 1] range
+        image = tf.clip_by_value(image / 255, 0., 1.)
+        # map defaults to boxes
+        gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
+        # return preprocessed image & data
+        return image, (gt_clss, gt_locs)
+
+    def _preprocess_deeplab(image, boxes_cl, boxes_xy, mask, name):
+        # resize image
+        image = tf.image.resize(image, size, antialias=True)
+        # scale image color values to [0, 1] range
+        image = tf.clip_by_value(image / 255, 0., 1.)
+        # resize mask
+        mask = tf.image.resize(mask, size, method='nearest')
+        # reshape - get rid of last dimension
+        mask = tf.reshape(mask, shape=size)
+        # restrict mask to values from 0 to num_classes
+        mask = tf.clip_by_value(mask, 0, n_seg-1)
+        mask = tf.cast(mask, tf.uint8)
+        # return preprocessed image & data
+        return image, mask
+
+    def _preprocess_both(image, boxes_cl, boxes_xy, mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # scale image color values to [0, 1] range
@@ -132,4 +159,9 @@ def preprocess(size: Tuple[int], bbox_utils: BBoxUtils, n_seg: int):
         # return preprocessed image & data
         return image, (gt_clss, gt_locs, mask)
 
-    return _preprocess
+    if bbox_utils is None:
+        return _preprocess_deeplab
+    elif n_seg == 0:
+        return _preprocess_ssd
+    else:
+        return _preprocess_both

@@ -57,13 +57,13 @@ def conv_bn_relu6(
     return ReLU(6., name=f"{name}_relu6")(bn)
 
 
-def depthwise_bn_relu6(inputs, name, strides, dilation_rate=1):
+def depthwise_bn_relu6(inputs, name, strides, dilation_rate=1, padding='same'):
     """Depthwise 3x3 Conv2D, as used in Inverted ResNet block.
     """
     conv = DepthwiseConv2D(
             kernel_size=3,
             strides=strides,
-            padding='same',
+            padding=padding,
             use_bias=False,
             activation=None,
             dilation_rate=dilation_rate,
@@ -127,7 +127,8 @@ def bottleneck2(
     depthwise = depthwise_bn_relu6(
         inputs=zeropad,
         strides=strides,
-        name=f"{name}_dw"
+        name=f"{name}_dw",
+        padding='same' if strides == 1 else 'valid'
     )
     project_conv = conv_bn_relu6(
         inputs=depthwise,

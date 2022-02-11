@@ -11,9 +11,11 @@ from contextlib import redirect_stdout
 from tqdm import tqdm
 
 from lib.augment import Augment
-from lib.tf_bbox_utils import BBoxUtils
+from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
+from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf
 from lib.preprocess import (
-    filter_empty_samples, preprocess, filter_classes_bbox, filter_classes_mask)
+    filter_empty_samples, preprocess_np, preprocess_tf,
+    filter_classes_bbox, filter_classes_mask)
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
@@ -109,7 +111,7 @@ def main():
     parser.add_argument(
         '--freeze-base-epochs',
         type=int,
-        default=1,
+        default=5,
         help='Freeze base layers for number of epochs.'
     )
     parser.add_argument(
@@ -133,6 +135,11 @@ def main():
         help='Ony train DeepLab model.'
     )
     parser.add_argument(
+        '--use-numpy',
+        action='store_true',
+        help='Use (slower) numpy for encoding of ground truth.'
+    )
+    parser.add_argument(
         '--model-width',
         type=int,
         default=224,
@@ -153,7 +160,7 @@ def main():
     parser.add_argument(
         '--warmup-epochs',
         type=int,
-        default=1,
+        default=2,
         help='Warmup epochs for learning rate schedule.'
     )
     parser.add_argument(
@@ -197,6 +204,7 @@ def main():
     freeze_deeplab = args.freeze_deeplab
     ssd_only = args.ssd_only
     deeplab_only = args.deeplab_only
+    use_numpy = args.use_numpy
     model_width = args.model_width
     image_width = args.image_width
     image_height = args.image_height
@@ -272,6 +280,10 @@ def main():
                 layer.trainable = False
 
     # Bounding box utility object
+    if use_numpy:
+        BBoxUtils = BBoxUtilsNp
+    else:
+        BBoxUtils = BBoxUtilsTf
     bbox_util = None if deeplab_only else BBoxUtils(n_det, default_boxes_cw)
 
     # Number of classes for segmentation
@@ -313,10 +325,16 @@ def main():
         val_ds = val_ds.filter(filter_empty_samples)
 
     # Preprocess data
-    train_ds = train_ds.map(
-        preprocess((model_width, model_width), bbox_util, n_seg))
-    val_ds = val_ds.map(
-        preprocess((model_width, model_width), bbox_util, n_seg))
+    if use_numpy:
+        train_ds = train_ds.map(
+            preprocess_np((model_width, model_width), bbox_util, n_seg))
+        val_ds = val_ds.map(
+            preprocess_np((model_width, model_width), bbox_util, n_seg))
+    else:
+        train_ds = train_ds.map(
+            preprocess_tf((model_width, model_width), bbox_util, n_seg))
+        val_ds = val_ds.map(
+            preprocess_tf((model_width, model_width), bbox_util, n_seg))
 
     # Create batches
     train_ds_batch = train_ds.batch(batch_size=batch_size)

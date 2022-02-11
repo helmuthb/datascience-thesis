@@ -69,6 +69,7 @@ def iou_xy(b1_xy, b2_xy):
     """
     b1_xy = tf.expand_dims(b1_xy, 1)
     b2_xy = tf.expand_dims(b2_xy, 0)
+    # top-left / bottom-right points of the intersection
     i_tl = tf.math.maximum(b1_xy[..., :2], b2_xy[..., :2])
     i_br = tf.math.minimum(b1_xy[..., 2:], b2_xy[..., 2:])
     # area of intersection
@@ -121,7 +122,7 @@ class BBoxUtils(object):
         self.default_boxes_cw = default_boxes_cw
         self.default_boxes_xy = to_xy(default_boxes_cw)
         self.n_default_boxes = default_boxes_cw.shape[0]
-        self.variances = variances
+        self.variances = tf.convert_to_tensor(variances, dtype=tf.float32)
         self.min_pos_iou = min_pos_iou
         self.max_neg_iou = max_neg_iou
         self.min_area = min_area
@@ -147,7 +148,7 @@ class BBoxUtils(object):
             ((boxes_cw[..., :2] - self.default_boxes_cw[:, :2]) /
                 (self.default_boxes_cw[:, 2:] * self.variances[0])),
             (tf.math.log(boxes_cw[..., 2:] / self.default_boxes_cw[:, 2:]) /
-                self.variances[1])
+                self.variances[1]),
         ], axis=-1)
         return locs
 
@@ -188,39 +189,137 @@ class BBoxUtils(object):
         """
         iou = iou_xy(boxes_xy, self.default_boxes_xy)
         # for each default find the best IoU
-        best_gt_iou = tf.math.reduce_max(iou, 0)
-        # for each default find the best gt
-        best_gt_idx = tf.math.argmax(iou, 0)
-        # for each gt find the best default
-        best_default_idx = tf.math.argmax(iou, 1)
+        max_iou_default = tf.math.reduce_max(iou, axis=0)
+        # for each default find the best gt index
+        max_gt_idx_default = tf.math.argmax(iou, axis=0)
+        # for each gt find the best default index
+        max_default_gt_idx = tf.math.argmax(iou, axis=1)
+        max_default_gt_idx_2 = tf.expand_dims(max_default_gt_idx, axis=1)
 
-        # best default for each ground truth has preference ...
-        best_gt_idx = tf.tensor_scatter_nd_update(
-            best_gt_idx,
-            tf.expand_dims(best_default_idx, 1),
-            tf.range(tf.shape(best_default_idx)[0], dtype=tf.int64)
+        # best default for each ground truth has priority ...
+        max_gt_idx_default = tf.tensor_scatter_nd_update(
+            max_gt_idx_default,
+            max_default_gt_idx_2,
+            tf.range(tf.shape(max_default_gt_idx)[0], dtype=tf.int64)
         )
         # ... and is set to IoU=1 to defy minimum IoU criteria
-        best_gt_iou = tf.tensor_scatter_nd_update(
-            best_gt_iou,
-            tf.expand_dims(best_default_idx, 1),
-            tf.ones_like(best_default_idx, dtype=tf.float32)
+        max_iou_default = tf.tensor_scatter_nd_update(
+            max_iou_default,
+            max_default_gt_idx_2,
+            tf.ones_like(max_default_gt_idx, dtype=tf.float32)
         )
 
-        # find class for each default ...
-        gt_clss = tf.gather(boxes_cl, best_gt_idx)
-        # ... and set to 0 (background) if IoU too small
+        # find class for each default
+        gt_clss = tf.gather(boxes_cl, max_gt_idx_default)
+
+        # find box for each default and convert to distortion
+        boxes_xy = tf.gather(boxes_xy, max_gt_idx_default)
+        boxes_cw = to_cw(boxes_xy)
+        gt_locs = self._encode_cw(boxes_cw)
+
+        # set class to 0 (background) if IoU too small
+        # not sure what this shall do ...
+        below_threshold = tf.less(max_iou_default, self.min_pos_iou)
         gt_clss = tf.where(
-            tf.less(best_gt_iou, self.iou_threshold),
+            below_threshold,
             tf.zeros_like(gt_clss),
             gt_clss
         )
 
-        # find box for each default and convert to distortion
-        boxes_xy = tf.gather(boxes_xy, best_gt_idx)
-        boxes_cw = to_cw(boxes_xy)
-        gt_locs = self._encode_cw(boxes_cw)
+        # set class to -1 (neutral) if IoU very small
+        neutral_threshold = tf.less(max_iou_default, self.max_neg_iou)
+        gt_clss = tf.where(
+            neutral_threshold,
+            -tf.ones_like(gt_clss),
+            gt_clss
+        )
 
+        return gt_clss, gt_locs
+
+    def map_defaults_xy_np(self, boxes_cl, bboxes_xy):
+        """Assign default boxes for provided bounding boxes.
+        First each bounding box is mapped to the default box of highest match,
+        such that each default box is used only once.
+        The remaining default boxes are mapped to the bounding box with
+        highest IoU, as long as the IoU is at least min_pos_iou.
+        The remaing default boxes are mapped to background if the largest IoU
+        is less than max_neg_iou; otherwise they are marked as neutral.
+
+        Args:
+            boxes_cl (np.ndarray [n2, 1]): Array of classes per box.
+            bboxes_xy (np.ndarray [n2, 4]): Array of bounding boxes corners.
+        Returns:
+            gt_clss (np.ndarray [n1]): Ground truth classes.
+            gt_locs (np.ndarray [n1, 4]): Location ground truth.
+        """
+        # only one box provided?
+        if tf.rank(bboxes_xy) == 1:
+            bboxes_xy = tf.expand_dims(bboxes_xy, 0)
+        bboxes_cw = to_cw(bboxes_xy)
+        # initialize n1, n2
+        n1 = self.n_default_boxes
+        # ground truth tensor for training
+        gt_clss = tf.zeros((n1,), dtype=tf.int32)
+        gt_cw = tf.zeros((n1, 4), dtype=tf.float32)
+        # no box left after skipping small ones? return as-is
+        if bboxes_xy.shape[0] == 0:
+            return gt_clss, gt_cw
+        # calculate IoU values for all defaults and all boxes
+        iou_vals = iou_xy(self.default_boxes_xy, bboxes_xy)
+        # step 1: map each box to the default with highest IoU
+        main_box_default_box = tf.argmax(iou_vals, axis=0)
+        # removing the selected defaults (setting their IoU to 0)
+        # from further mapping
+        iou_vals = tf.tensor_scatter_nd_update(
+            iou_vals,
+            main_box_default_box,
+            tf.zeros_like(iou_vals)
+        )
+        # add defaults to ground truth
+        bbox = tf.range(tf.shape(main_box_default_box)[0], dtype=tf.int64)
+
+        for bbox, default_box in enumerate(main_box_default_box):
+            cl = boxes_cl[bbox]
+            gt_clss = tf.tensor_scatter_nd_update(
+                gt_clss,
+                default_box,
+                cl
+            )
+            gt_cw = tf.tensor_scatter_nd_update(
+                gt_cw,
+                default_box,
+                bboxes_cw
+            )
+        # step 2: find for each default the box with maximum IoU
+        aux_default_boxes = tf.argmax(iou_vals, axis=1)
+        # do they satisfy the thresholds?
+        for default_box, bbox in enumerate(aux_default_boxes):
+            if iou_vals[default_box, bbox] > self.min_pos_iou:
+                # add them to ground truth
+                cl = boxes_cl[bbox]
+                gt_clss = tf.tensor_scatter_nd_update(
+                    gt_clss,
+                    default_box,
+                    cl
+                )
+                gt_cw = tf.tensor_scatter_nd_update(
+                    gt_cw,
+                    default_box,
+                    bboxes_cw
+                )
+            elif iou_vals[default_box, bbox] > self.max_neg_iou:
+                # add them as neutral
+                gt_clss = tf.tensor_scatter_nd_update(
+                    gt_clss,
+                    default_box,
+                    0
+                )
+                gt_cw = tf.tensor_scatter_nd_update(
+                    gt_cw,
+                    default_box,
+                    bboxes_cw
+                )
+        gt_locs = self._encode_cw(gt_cw)
         return gt_clss, gt_locs
 
     def _nms_xy(self, boxes_sc, boxes_xy):
@@ -230,17 +329,62 @@ class BBoxUtils(object):
         and then removing all remaining boxes having a too high overlap.
 
         Args:
-            boxes_sc (np.ndarray [n]): Array of scores per box.
-            boxes_xy (np.ndarray [n, 4]): Array of candidate boxes (xy format).
+            boxes_sc (tensor(n)): Array of scores per box.
+            boxes_xy (tensor(n, 4)): Array of candidate boxes (xy format).
         Returns:
-            boxes_sc (np.ndarray [n2]): Remaining class scores.
-            boxes_xy (np.ndarray [n2, 4]): Remaining bounding boxes.
+            selected (np.ndarray[n2]): Selected indexes.
+        """
+        # no scores & boxes?
+        n = boxes_sc.shape[0]
+        if n == 0:
+            return (np.array([], dtype=np.float32),
+                    np.array([], dtype=np.float32))
+        # sort boxes by score descending
+        idx = tf.argsort(boxes_sc, direction='DESCENDING')
+        boxes_sc = tf.gather(boxes_sc, idx)
+        boxes_xy = tf.gather(boxes_xy, idx)
+        # get iou values
+        iou = iou_xy(boxes_xy, boxes_xy)
+        # get numpy versions
+        boxes_sc = boxes_sc.numpy()
+        boxes_xy = boxes_xy.numpy()
+        iou = iou.numpy()
+        idx = idx.numpy()
+        # indexes selected so far
+        selected = []
+        for pos in range(n):
+            if boxes_sc[pos] < self.min_confidence:
+                # go to next position
+                continue
+            # take next box
+            selected.append(idx[pos])
+            # row of overlap
+            iou_row = iou[pos, :]
+            # set score to zero for overlap
+            boxes_sc[iou_row > self.iou_threshold] = 0.
+            # enough boxes?
+            if len(selected) >= self.top_k:
+                break
+        return selected
+
+    def _nms_xy_org(self, boxes_sc, boxes_xy):
+        """Perform non-maximum suppression of candidate boxes for one class.
+
+        This is a greedy algorithm, starting with the highest scoring boxes,
+        and then removing all remaining boxes having a too high overlap.
+
+        Args:
+            boxes_sc (tensor(n)): Array of scores per box.
+            boxes_xy (tensor(n, 4)): Array of candidate boxes (xy format).
+        Returns:
+            boxes_sc (tensor(n2)): Remaining class scores.
+            boxes_xy (tensor(n2, 4)): Remaining bounding boxes.
         """
         if boxes_xy.shape[0] == 0:
             return tf.constant([], dtype=tf.int32)
         selected = [0]
-        idx = tf.argsort(boxes_sc, direction='DESCENDING')
-        idx = idx[:self.top_k]
+        top_k = tf.math.minimum(self.top_k, boxes_xy.shape[0])
+        _, idx = tf.math.top_k(boxes_sc, top_k)
         boxes_xy = tf.gather(boxes_xy, idx)
 
         iou = iou_xy(boxes_xy, boxes_xy)
@@ -255,13 +399,11 @@ class BBoxUtils(object):
             )
             if not tf.math.reduce_any(next_indices):
                 break
-            selected.append(tf.argsort(
-                tf.dtypes.cast(next_indices, tf.int32),
-                direction='DESCENDING')[0].numpy())
+            selected.append(tf.argmax(next_indices).numpy())
 
         return tf.gather(idx, selected)
 
-    def pred_to_boxes_np(self, pr_conf, pr_locs):
+    def pred_to_boxes(self, pr_conf, pr_locs):
         """Convert predictions into boxes and class scores.
 
         Args:
@@ -273,7 +415,8 @@ class BBoxUtils(object):
             boxes_xy (np.array(n2, 4)): boxes predicted from network.
         """
         pr_conf = tf.math.softmax(pr_conf, axis=-1)
-        pr_boxes = self._decode_cw(pr_locs)
+        pr_boxes_cw = self._decode_cw(pr_locs)
+        pr_boxes_xy = to_xy(pr_boxes_cw)
 
         boxes_cl = []
         boxes_sc = []
@@ -282,18 +425,19 @@ class BBoxUtils(object):
         for c in range(1, self.n_classes):
             cls_scores = pr_conf[:, c]
 
-            score_idx = cls_scores > 0.6
-            cls_boxes = pr_boxes[score_idx]
-            cls_scores = cls_scores[score_idx]
+            # filter for minimum confidence
+            score_idx = cls_scores > self.min_confidence
+            cls_xy = pr_boxes_xy[score_idx]
+            cls_sc = cls_scores[score_idx]
 
-            nms_idx = self._nms_xy(cls_scores, cls_boxes)
-            cls_boxes = tf.gather(cls_boxes, nms_idx)
-            cls_scores = tf.gather(cls_scores, nms_idx)
-            cls_labels = [c] * cls_boxes.shape[0]
+            nms_idx = self._nms_xy(cls_sc, cls_xy)
+            cls_sc = tf.gather(cls_sc, nms_idx)
+            cls_xy = tf.gather(cls_xy, nms_idx)
+            cls_cl = [c] * cls_xy.shape[0]
 
-            boxes_cl.extend(cls_labels)
-            boxes_sc.append(cls_scores)
-            boxes_xy.append(cls_boxes)
+            boxes_cl.extend(cls_cl)
+            boxes_sc.append(cls_sc)
+            boxes_xy.append(cls_xy)
 
         boxes_cl = np.array(boxes_cl)
         boxes_sc = tf.concat(boxes_sc, axis=0)

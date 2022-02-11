@@ -28,15 +28,21 @@ class SSDLosses():
     def __init__(self, neg_ratio):
         self.neg_ratio = neg_ratio
 
-    def negative_mining(self, gt_clss, pr_conf):
+    def _negative_mining(self, gt_clss, gt_cls2, pr_conf):
         """Calculate indexes with hard-negatives.
         """
         # calculate classification losses (without reduction)
         cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(
             from_logits=True,
             reduction='none'
-            )
-        loss = cross_entropy(gt_clss, pr_conf)
+        )
+        loss = cross_entropy(gt_cls2, pr_conf)
+        # set the loss to 0 zero if neutral
+        loss = tf.where(
+            tf.less(gt_clss, 0),
+            tf.zeros_like(loss),
+            loss
+        )
         # positive indexes: where we have an object in the gt
         pos_idx = gt_clss > 0
         # number of positive indexes per image
@@ -56,14 +62,19 @@ class SSDLosses():
         """"Calculate the SSD losses from the predicted logits.
         """
         # hard-mining of negatives
-        pos_idx, neg_idx = self.negative_mining(gt_clss, pr_conf)
+        gt_cls2 = tf.where(
+            tf.less(gt_clss, 0),
+            tf.zeros_like(gt_clss),
+            gt_clss
+        )
+        pos_idx, neg_idx = self._negative_mining(gt_clss, gt_cls2, pr_conf)
         conf_idx = tf.math.logical_or(pos_idx, neg_idx)
         # classification loss
         cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(
             from_logits=True,
             reduction='sum'
         )
-        conf_loss = cross_entropy(gt_clss[conf_idx], pr_conf[conf_idx])
+        conf_loss = cross_entropy(gt_cls2[conf_idx], pr_conf[conf_idx])
         # localization loss
         smooth_l1_loss = tf.keras.losses.Huber(reduction='sum')
         locs_loss = smooth_l1_loss(gt_locs[pos_idx], pr_locs[pos_idx])

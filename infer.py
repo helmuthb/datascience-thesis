@@ -9,9 +9,10 @@ from tqdm import tqdm
 
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
-    filter_empty_samples, preprocess, filter_classes_bbox,
-    filter_classes_mask, subset_names)
-from lib.tf_bbox_utils import BBoxUtils, to_cw
+    filter_empty_samples, preprocess_np, preprocess_tf,
+    filter_classes_bbox, filter_classes_mask, subset_names)
+from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
+from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation
@@ -60,6 +61,11 @@ def main():
         help='Ony train DeepLab model.'
     )
     parser.add_argument(
+        '--use-numpy',
+        action='store_true',
+        help='Use (slower) numpy for encoding of ground truth.'
+    )
+    parser.add_argument(
         '--model-width',
         type=int,
         default=224,
@@ -83,6 +89,7 @@ def main():
     subset_only = args.subset_only
     ssd_only = args.ssd_only
     deeplab_only = args.deeplab_only
+    use_numpy = args.use_numpy
     model_width = args.model_width
     image_width = args.image_width
     image_height = args.image_height
@@ -109,6 +116,10 @@ def main():
     model, default_boxes_cw, base, deeplab, ssd = models
 
     # Bounding box utility object
+    if use_numpy:
+        BBoxUtils = BBoxUtilsNp
+    else:
+        BBoxUtils = BBoxUtilsTf
     bbox_util = None if deeplab_only else BBoxUtils(
         n_det, default_boxes_cw, min_confidence=0.01)
 
@@ -134,8 +145,12 @@ def main():
         val_ds = val_ds.filter(filter_empty_samples)
 
     # Preprocess data
-    val_ds_preprocessed = val_ds.map(
-        preprocess((model_width, model_width), bbox_util, n_seg))
+    if use_numpy:
+        val_ds_preprocessed = val_ds.map(
+            preprocess_np((model_width, model_width), bbox_util, n_seg))
+    else:
+        val_ds_preprocessed = val_ds.map(
+            preprocess_tf((model_width, model_width), bbox_util, n_seg))
 
     # Create batches
     val_ds_batch = val_ds_preprocessed.batch(batch_size=batch_size)
@@ -164,7 +179,7 @@ def main():
             p_conf, p_locs, p_segs, (image, g_cl, g_xy, g_segs, name) = x
         name = name.decode('utf-8')
         if not deeplab_only:
-            p_cl, p_sc, p_xy = bbox_util.pred_to_boxes_np(p_conf, p_locs)
+            p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
             det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
             g_xy = g_xy.copy()
             g_xy[:, 0] *= image_width

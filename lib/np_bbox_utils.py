@@ -435,7 +435,7 @@ class BBoxUtils(object):
                 gt_clss[default_box] = cl
                 gt_locs[default_box] = self._one_row_gt_locs(
                     cl,
-                    self.default_boxes_[default_box],
+                    self.default_boxes_cw[default_box],
                     bboxes_cw[bbox],
                 )
             elif iou_vals[default_box, bbox] > self.max_neg_iou:

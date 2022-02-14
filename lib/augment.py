@@ -85,13 +85,13 @@ class Augment():
                 out['mask'], name)
 
     def tf_wrap(self):
-        def _tf_wrap(image, boxes_cl, boxes_xy, mask, name):
+        def _tf_wrap(image, boxes_cl, boxes_xy, mask, has_mask, name):
             image, cl, xy, mask, name = tf.numpy_function(
                 self,
                 (image, boxes_cl, boxes_xy, mask, name),
                 (tf.float32, tf.int64, tf.float32, tf.uint8, tf.string)
             )
-            image.set_shape([None, None, 3])
-            mask.set_shape([None, None, 1])
-            return (image, cl, xy, mask, name)
+            image.set_shape([self.height, self.width, 3])
+            mask.set_shape([self.height, self.width, 1])
+            return (image, cl, xy, mask, has_mask, name)
         return _tf_wrap

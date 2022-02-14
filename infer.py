@@ -9,14 +9,12 @@ from tqdm import tqdm
 
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
-    filter_empty_samples, preprocess_np, preprocess_tf,
-    filter_classes_bbox, filter_classes_mask, subset_names)
+    filter_empty_samples, filter_no_mask, preprocess_np, preprocess_tf)
 from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
 from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation
-import lib.rs19_classes as rs19
 
 
 def main():
@@ -46,19 +44,14 @@ def main():
         help='Number of samples per batch (default=8).'
     )
     parser.add_argument(
-        '--subset-only',
-        action='store_true',
-        help='Use only subset of classes instead of all.'
+        '--det-classes',
+        type=str,
+        help='File with class names for object detection.'
     )
     parser.add_argument(
-        '--ssd-only',
-        action='store_true',
-        help='Only train SSDlite model.'
-    )
-    parser.add_argument(
-        '--deeplab-only',
-        action='store_true',
-        help='Ony train DeepLab model.'
+        '--seg-classes',
+        type=str,
+        help='File with class names for segmentation.'
     )
     parser.add_argument(
         '--use-numpy',
@@ -84,76 +77,75 @@ def main():
         help='Specify original image height'
     )
     args = parser.parse_args()
+    tfrecdir = args.tfrecords
     outdir = args.out_samples
     batch_size = args.batch_size
-    subset_only = args.subset_only
-    ssd_only = args.ssd_only
-    deeplab_only = args.deeplab_only
+    det_classes = args.det_classes
+    seg_classes = args.seg_classes
     use_numpy = args.use_numpy
     model_width = args.model_width
     image_width = args.image_width
     image_height = args.image_height
-    # create output directory if missing
+    # create output directories if missing
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-data", exist_ok=True)
     os.makedirs(f"{outdir}/seg-annotated", exist_ok=True)
 
     # number & names of classes
-    if subset_only:
-        n_seg = len(rs19.seg_subset)
-        n_det = len(rs19.det_subset)
-        seg_names = rs19.seg_classes
-        det_names = subset_names(rs19.det_subset)
+    if det_classes is None:
+        det_names = []
+        n_det = 0
     else:
-        n_seg = len(rs19.seg_classes)
-        n_det = len(rs19.det_classes)
-        seg_names = rs19.seg_classes
-        det_names = rs19.det_classes
+        with open(det_classes, 'r') as f:
+            det_names = f.read().splitlines()
+        n_det = len(det_names)
+    if seg_classes is None:
+        seg_names = []
+        n_seg = 0
+    else:
+        with open(seg_classes, 'r') as f:
+            seg_names = f.read().splitlines()
+        n_seg = len(seg_names)
 
     # build model
     models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
-    model, default_boxes_cw, base, deeplab, ssd = models
+    _, default_boxes_cw, _, _, _ = models
 
     # Bounding box utility object
     if use_numpy:
         BBoxUtils = BBoxUtilsNp
     else:
         BBoxUtils = BBoxUtilsTf
-    bbox_util = None if deeplab_only else BBoxUtils(
-        n_det, default_boxes_cw, min_confidence=0.01)
-
-    # Number of classes for segmentation = 0 if only object detection
-    if ssd_only:
-        n_seg = 0
+    bbox_util = None if n_det == 0 else BBoxUtils(
+        n_det, default_boxes_cw)
 
     # Load validation data
-    val_ds = read_tfrecords(
-            os.path.join(args.tfrecords, 'val.tfrec'))
+    val_ds = read_tfrecords(f"{tfrecdir}/val.tfrec", shuffle=False)
+    # val_ds = read_tfrecords(f"{tfrecdir}/train.tfrec", shuffle=False)
 
-    # Filter for classes of interest
-    if subset_only:
-        val_ds = val_ds.map(
-            filter_classes_bbox(rs19.det_classes, rs19.det_subset)
-        )
-        val_ds = val_ds.map(
-            filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
-        )
-
-    # Filter out empty samples - if SSD requested
-    if not deeplab_only:
+    # Filter out empty samples - if object detection requested
+    if n_det > 0:
         val_ds = val_ds.filter(filter_empty_samples)
+
+    # Filter out missing masks - if segmentation requested
+    if n_seg > 0:
+        val_ds = val_ds.filter(filter_no_mask)
 
     # Preprocess data
     if use_numpy:
         val_ds_preprocessed = val_ds.map(
-            preprocess_np((model_width, model_width), bbox_util, n_seg))
+            preprocess_np((model_width, model_width), bbox_util, n_seg)
+        )
     else:
         val_ds_preprocessed = val_ds.map(
-            preprocess_tf((model_width, model_width), bbox_util, n_seg))
+            preprocess_tf((model_width, model_width), bbox_util, n_seg)
+        )
 
     # Create batches
-    val_ds_batch = val_ds_preprocessed.batch(batch_size=batch_size)
+    val_ds_batch = val_ds_preprocessed.batch(
+        batch_size=batch_size
+    )
 
     # load model
     model = tf.keras.models.load_model(args.model)
@@ -161,7 +153,7 @@ def main():
 
     # perform inference on validation set
     pr = model.predict(val_ds_batch)
-    if deeplab_only:
+    if n_det == 0:
         pr = (pr,)
 
     # evaluation & plots
@@ -171,14 +163,14 @@ def main():
     ds_size = 0
     for x in tqdm(zip(*pr, i_origs)):
         ds_size += 1
-        if ssd_only:
-            p_conf, p_locs, (image, g_cl, g_xy, g_segs, name) = x
-        elif deeplab_only:
-            p_segs, (image, g_cl, g_xy, g_segs, name) = x
+        if n_seg == 0:
+            p_conf, p_locs, (img, g_cl, g_xy, g_sg, _, nm) = x
+        elif n_det == 0:
+            p_segs, (img, g_cl, g_xy, g_sg, _, nm) = x
         else:
-            p_conf, p_locs, p_segs, (image, g_cl, g_xy, g_segs, name) = x
-        name = name.decode('utf-8')
-        if not deeplab_only:
+            p_conf, p_locs, p_segs, (img, g_cl, g_xy, g_sg, _, nm) = x
+        name = nm.decode('utf-8')
+        if n_det > 0:
             p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
             det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
             g_xy = g_xy.copy()
@@ -186,15 +178,15 @@ def main():
             g_xy[:, 1] *= image_height
             g_xy[:, 2] *= image_width
             g_xy[:, 3] *= image_height
-            img = image.copy()
+            img2 = img.copy()
             for box_xy in g_xy:
                 top_left = (int(round(box_xy[0])), int(round(box_xy[1])))
                 bot_right = (int(round(box_xy[2])), int(round(box_xy[3])))
                 color = (0, 255, 0)
-                cv2.rectangle(img, top_left, bot_right, color, 2)
-            cv2.imwrite(f"{outdir}/orig-annotated/{name}.jpg", img)
+                cv2.rectangle(img2, top_left, bot_right, color, 2)
+            cv2.imwrite(f"{outdir}/orig-annotated/{name}.jpg", img2)
             file_name = f"{outdir}/pred-annotated/{name}.jpg"
-            annotate_boxes(image, p_cl, p_sc, p_xy, det_names, file_name)
+            annotate_boxes(img, p_cl, p_sc, p_xy, det_names, file_name)
             # create output file for evaluation
             p_cw = to_cw(p_xy)
             with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
@@ -206,12 +198,12 @@ def main():
                     b2_str = " ".join([str(b) for b in xy])
                     f.write(f"{cl} {sc} {b_str}\n")
                     f.write(f"# XY: {cl} {sc} {b2_str}\n")
-        if not ssd_only:
+        if n_seg > 0:
             # evaluation of segmentation
-            seg_eval.evaluate_sample(g_segs, p_segs)
+            seg_eval.evaluate_sample(g_sg, p_segs)
             # annotate segmentation
             file_prefix = f"{outdir}/seg-annotated/{name}"
-            annotate_segmentation(image, g_segs, p_segs, file_prefix)
+            annotate_segmentation(img, g_sg, p_segs, file_prefix)
     # runtime for inference
     print("Calculating running time ...")
     runtime = timeit.timeit(lambda: model.predict(val_ds_batch), number=1)
@@ -221,7 +213,7 @@ def main():
     print(f"Inference time: {runtime/ds_size} sec.")
     print(f"Preprocessing time: {runtime_pre/ds_size} sec.")
     print(f"Network time: {(runtime-runtime_pre)/ds_size} sec.")
-    if not ssd_only:
+    if n_seg > 0:
         print("Segmentation metrics")
         print(f"Mean IoU: {seg_eval.mean_iou():.2%}")
         print(f"Pixel accuracy: {seg_eval.pixel_accuracy():.2%}")
@@ -231,7 +223,7 @@ def main():
         # create miou / confusion matrix plots
         seg_eval.plot_iou(seg_names, f"{outdir}/iou-plot.png")
         seg_eval.plot_cm(seg_names, f"{outdir}/cm-plot.png")
-    if not deeplab_only:
+    if n_det > 0:
         print("Object detection metrics")
         # calculate mean average precision / recall
         prec_rec = det_eval.mean_average_precision_recall()

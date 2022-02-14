@@ -133,7 +133,7 @@ def annotate_boxes(img: np.ndarray,
     for i, box_xy in enumerate(boxes_xy):
         cl = b_cl[i]
         color = [x/256 for x in COLORMAP[cl]]
-        if cl in classes:
+        if cl >= 0 and cl < len(classes):
             label = classes[cl]
         else:
             label = "unknown"

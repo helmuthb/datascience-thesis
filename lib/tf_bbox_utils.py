@@ -57,7 +57,24 @@ def to_xy(box_cw):
     return box_xy
 
 
-def iou_xy(b1_xy, b2_xy):
+def correct_box(box_xy, clip_to=None):
+    """Correct a box in x0/y0/x1/y1 coordinates.
+    If x0 > x1 or y0 > y1 then the box is corrected to x1=x0 or y1=y0.
+    Additionally the values are clipped as specified.
+
+    Args:
+        box_xy (tensor [n1, 4]): List of boxes in x0/y1/x1/y1.
+        clip_to (float): Maximum value for clipping.
+    """
+    box_tl = box_xy[..., :2]
+    box_br = tf.maximum(box_xy[..., 2:], box_tl)
+    box_xy = tf.concat([box_tl, box_br], axis=-1)
+    if clip_to is None:
+        return tf.maximum(box_xy, 0)
+    return tf.clip_by_value(box_xy, 0, clip_to)
+
+
+def iou_xy(b1_xy, b2_xy, clip_to=None):
     """Calculate the Intersection over Union between two lists of boxes.
     One can also specify just two boxes.
 
@@ -67,22 +84,23 @@ def iou_xy(b1_xy, b2_xy):
     Returns:
         IoU (tensor, [n1, n2]): IoU measure.
     """
+    b1_xy = correct_box(b1_xy, clip_to)
+    b2_xy = correct_box(b2_xy, clip_to)
     b1_xy = tf.expand_dims(b1_xy, 1)
     b2_xy = tf.expand_dims(b2_xy, 0)
     # top-left / bottom-right points of the intersection
     i_tl = tf.math.maximum(b1_xy[..., :2], b2_xy[..., :2])
     i_br = tf.math.minimum(b1_xy[..., 2:], b2_xy[..., 2:])
     # area of intersection
-    i_hw = i_tl - i_br
+    i_hw = i_br - i_tl
     i_ar = i_hw[..., 0] * i_hw[..., 1]
     # area of b1 & b2 boxes
-    b1_hw = b1_xy[..., :2] - b1_xy[..., 2:]
-    b2_hw = b2_xy[..., :2] - b2_xy[..., 2:]
+    b1_hw = b1_xy[..., 2:] - b1_xy[..., :2]
+    b2_hw = b2_xy[..., 2:] - b2_xy[..., :2]
     b1_ar = b1_hw[..., 0] * b1_hw[..., 1]
     b2_ar = b2_hw[..., 0] * b2_hw[..., 1]
-    # union area
-    u_ar = b1_ar + b2_ar - i_ar
-    return i_ar / u_ar
+    # intersection over union
+    return i_ar / (b1_ar + b2_ar - i_ar + tf.keras.backend.epsilon())
 
 
 class BBoxUtils(object):
@@ -92,13 +110,13 @@ class BBoxUtils(object):
     object detection process, including the variances, the number of
     classes, the minimum area of a box, the minimum positive and
     maximum negative IoU value, and the IoU threshold for the non-max
-    suppression. Also the number of bounding boxes to be kept after
+    suppression. Also the number of bounding boxes to be reviewed in
     NMS step is stored in the object.
     """
     def __init__(self, n_classes, default_boxes_cw,
-                 variances=(.1, .2), min_pos_iou=.05,
-                 max_neg_iou=.03, min_area=0.00001, min_confidence=0.2,
-                 iou_threshold=0.45, top_k=400):
+                 variances=(.1, .2), min_pos_iou=.5,
+                 max_neg_iou=.3, min_area=0.00001, min_confidence=0.2,
+                 iou_threshold=0.5, top_k=200):
         """Create BBoxUtils object.
 
         The parameters are used thoughout the object detection process.
@@ -187,7 +205,7 @@ class BBoxUtils(object):
             gt_clss (tensor [n_defaults]): Ground truth classes.
             gt_locs (tensor [n_defaults, 4]): Location ground truth.
         """
-        iou = iou_xy(boxes_xy, self.default_boxes_xy)
+        iou = iou_xy(boxes_xy, self.default_boxes_xy, clip_to=1)
         # for each default find the best IoU
         max_iou_default = tf.math.reduce_max(iou, axis=0)
         # for each default find the best gt index
@@ -217,20 +235,18 @@ class BBoxUtils(object):
         boxes_cw = to_cw(boxes_xy)
         gt_locs = self._encode_cw(boxes_cw)
 
-        # set class to 0 (background) if IoU too small
-        # not sure what this shall do ...
-        below_threshold = tf.less(max_iou_default, self.min_pos_iou)
+        # set class to -1 (neutral) if IoU too small for match
+        # but maybe detected by network
         gt_clss = tf.where(
-            below_threshold,
-            tf.zeros_like(gt_clss),
+            tf.less(max_iou_default, self.min_pos_iou),
+            -tf.ones_like(gt_clss),
             gt_clss
         )
 
-        # set class to -1 (neutral) if IoU very small
-        neutral_threshold = tf.less(max_iou_default, self.max_neg_iou)
+        # set class to 0 (background) if IoU even smaller
         gt_clss = tf.where(
-            neutral_threshold,
-            -tf.ones_like(gt_clss),
+            tf.less(max_iou_default, self.max_neg_iou),
+            tf.zeros_like(gt_clss),
             gt_clss
         )
 
@@ -265,7 +281,7 @@ class BBoxUtils(object):
         if bboxes_xy.shape[0] == 0:
             return gt_clss, gt_cw
         # calculate IoU values for all defaults and all boxes
-        iou_vals = iou_xy(self.default_boxes_xy, bboxes_xy)
+        iou_vals = iou_xy(self.default_boxes_xy, bboxes_xy, clip_to=1)
         # step 1: map each box to the default with highest IoU
         main_box_default_box = tf.argmax(iou_vals, axis=0)
         # removing the selected defaults (setting their IoU to 0)
@@ -337,22 +353,22 @@ class BBoxUtils(object):
         # no scores & boxes?
         n = boxes_sc.shape[0]
         if n == 0:
-            return (np.array([], dtype=np.float32),
-                    np.array([], dtype=np.float32))
+            return tf.constant([], dtype=tf.int32)
         # sort boxes by score descending
-        idx = tf.argsort(boxes_sc, direction='DESCENDING')
+        # idx = tf.argsort(boxes_sc, direction='DESCENDING')
+        idx = np.argsort(-boxes_sc.numpy())
         boxes_sc = tf.gather(boxes_sc, idx)
         boxes_xy = tf.gather(boxes_xy, idx)
         # get iou values
-        iou = iou_xy(boxes_xy, boxes_xy)
+        iou = iou_xy(boxes_xy, boxes_xy, clip_to=1)
         # get numpy versions
         boxes_sc = boxes_sc.numpy()
         boxes_xy = boxes_xy.numpy()
         iou = iou.numpy()
-        idx = idx.numpy()
+        # idx = idx.numpy()
         # indexes selected so far
         selected = []
-        for pos in range(n):
+        for pos in min(self.top_k, range(n)):
             if boxes_sc[pos] < self.min_confidence:
                 # go to next position
                 continue
@@ -362,46 +378,7 @@ class BBoxUtils(object):
             iou_row = iou[pos, :]
             # set score to zero for overlap
             boxes_sc[iou_row > self.iou_threshold] = 0.
-            # enough boxes?
-            if len(selected) >= self.top_k:
-                break
-        return selected
-
-    def _nms_xy_org(self, boxes_sc, boxes_xy):
-        """Perform non-maximum suppression of candidate boxes for one class.
-
-        This is a greedy algorithm, starting with the highest scoring boxes,
-        and then removing all remaining boxes having a too high overlap.
-
-        Args:
-            boxes_sc (tensor(n)): Array of scores per box.
-            boxes_xy (tensor(n, 4)): Array of candidate boxes (xy format).
-        Returns:
-            boxes_sc (tensor(n2)): Remaining class scores.
-            boxes_xy (tensor(n2, 4)): Remaining bounding boxes.
-        """
-        if boxes_xy.shape[0] == 0:
-            return tf.constant([], dtype=tf.int32)
-        selected = [0]
-        top_k = tf.math.minimum(self.top_k, boxes_xy.shape[0])
-        _, idx = tf.math.top_k(boxes_sc, top_k)
-        boxes_xy = tf.gather(boxes_xy, idx)
-
-        iou = iou_xy(boxes_xy, boxes_xy)
-
-        while True:
-            row = iou[selected[-1]]
-            next_indices = (row <= self.min_confidence)
-            iou = tf.where(
-                tf.expand_dims(tf.math.logical_not(next_indices), 0),
-                tf.ones_like(iou, dtype=tf.float32),
-                iou
-            )
-            if not tf.math.reduce_any(next_indices):
-                break
-            selected.append(tf.argmax(next_indices).numpy())
-
-        return tf.gather(idx, selected)
+        return tf.convert_to_tensor(selected, dtype=tf.int32)
 
     def pred_to_boxes(self, pr_conf, pr_locs):
         """Convert predictions into boxes and class scores.
@@ -410,40 +387,33 @@ class BBoxUtils(object):
             pr_conf (tensor(n, n_classes)): confidence predictions.
             pr_locs (tensor(n, 4)): locations predictions.
         Returns:
-            boxes_cl (np.array(n2)): integer classes.
-            boxes_sc (np.array(n2)): float scores.
-            boxes_xy (np.array(n2, 4)): boxes predicted from network.
+            pr_cl (np.array(n2)): integer classes.
+            pr_sc (np.array(n2)): float scores.
+            pr_xy (np.array(n2, 4)): boxes predicted from network.
         """
-        pr_conf = tf.math.softmax(pr_conf, axis=-1)
-        pr_boxes_cw = self._decode_cw(pr_locs)
-        pr_boxes_xy = to_xy(pr_boxes_cw)
+        pr_cw = self._decode_cw(pr_locs)
+        pr_xy = to_xy(pr_cw)
+        pr_sc = tf.math.softmax(pr_conf, axis=-1)
+        # use only non-background
+        pr_cl = tf.argmax(pr_sc[..., 1:], axis=-1) + 1
+        pr_max_sc = tf.reduce_max(pr_sc[..., 1:], axis=-1)
 
-        boxes_cl = []
-        boxes_sc = []
-        boxes_xy = []
+        # perform non-maximum suppression
+        idx = self._nms_xy(pr_max_sc, pr_xy)
+        # idx = tf.image.non_max_suppression(
+        #     boxes=pr_xy,
+        #     scores=pr_max_sc,
+        #     max_output_size=self.top_k,
+        #     iou_threshold=self.min_pos_iou,
+        #     score_threshold=self.min_confidence
+        # )
 
-        for c in range(1, self.n_classes):
-            cls_scores = pr_conf[:, c]
+        pr_max_sc = tf.gather(pr_max_sc, idx)
+        pr_xy = tf.gather(pr_xy, idx)
+        pr_cl = tf.gather(pr_cl, idx)
 
-            # filter for minimum confidence
-            score_idx = cls_scores > self.min_confidence
-            cls_xy = pr_boxes_xy[score_idx]
-            cls_sc = cls_scores[score_idx]
+        pr_max_sc = pr_max_sc.numpy()
+        pr_xy = tf.clip_by_value(pr_xy, 0.0, 1.0).numpy()
+        pr_cl = pr_cl.numpy()
 
-            nms_idx = self._nms_xy(cls_sc, cls_xy)
-            cls_sc = tf.gather(cls_sc, nms_idx)
-            cls_xy = tf.gather(cls_xy, nms_idx)
-            cls_cl = [c] * cls_xy.shape[0]
-
-            boxes_cl.extend(cls_cl)
-            boxes_sc.append(cls_sc)
-            boxes_xy.append(cls_xy)
-
-        boxes_cl = np.array(boxes_cl)
-        boxes_sc = tf.concat(boxes_sc, axis=0)
-        boxes_xy = tf.concat(boxes_xy, axis=0)
-
-        boxes_xy = tf.clip_by_value(boxes_xy, 0.0, 1.0).numpy()
-        boxes_sc = boxes_sc.numpy()
-
-        return boxes_cl, boxes_sc, boxes_xy
+        return pr_cl, pr_max_sc, pr_xy

@@ -42,7 +42,7 @@ def ssd_deeplab_model(size, n_det, n_seg):
     return combined_model, default_boxes_cw, base, deeplab_model, ssd_model
 
 
-def loss_list(ssd_f, deeplab_f, ssd_only, deeplab_only):
+def loss_list(ssd_f, deeplab_f, n_det, n_seg):
     def _losses_combined(gt, pr):
         ssd_losses = ssd_f(gt[0], gt[1], pr[0], pr[1])
         deeplab_loss = deeplab_f(gt[2], pr[2])
@@ -54,16 +54,16 @@ def loss_list(ssd_f, deeplab_f, ssd_only, deeplab_only):
     def _losses_deeplab(gt, pr):
         return (deeplab_f(gt, pr),)
 
-    if ssd_only:
+    if n_seg == 0:
         return _losses_ssd
-    elif deeplab_only:
+    elif n_det == 0:
         return _losses_deeplab
     else:
         return _losses_combined
 
 
-def get_training_step(model, losses, weights, optimizer, ssd_only,
-                      deeplab_only, alpha=5e-4):
+def get_training_step(model, losses, weights, optimizer,
+                      n_det, n_seg, alpha=5e-4):
     w = tf.convert_to_tensor(weights, dtype=tf.float32)
     a = tf.convert_to_tensor(alpha, dtype=tf.float32)
 
@@ -109,9 +109,9 @@ def get_training_step(model, losses, weights, optimizer, ssd_only,
         optimizer.apply_gradients(zip(delta, model.trainable_variables))
         return (loss, *ll)
 
-    if ssd_only:
+    if n_seg == 0:
         return _step2
-    elif deeplab_only:
+    elif n_det == 0:
         return _step1
     else:
         return _step3

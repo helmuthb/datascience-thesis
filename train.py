@@ -14,12 +14,10 @@ from lib.augment import Augment
 from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
 from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf
 from lib.preprocess import (
-    filter_empty_samples, preprocess_np, preprocess_tf,
-    filter_classes_bbox, filter_classes_mask)
+    filter_empty_samples, filter_no_mask, preprocess_np, preprocess_tf)
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
-import lib.rs19_classes as rs19
 
 
 def print_model(model, name, out_folder):
@@ -81,16 +79,16 @@ def main():
         help='Perform augmentation.'
     )
     parser.add_argument(
-        '--ssd-weight',
+        '--det-weight',
         type=float,
         default=1.0,
-        help='Weight for SSD training (default = 1.0).'
+        help='Weight for object detection training (default = 1.0).'
     )
     parser.add_argument(
-        '--deeplab-weight',
+        '--seg-weight',
         type=float,
         default=1.0,
-        help='Weight for DeepLab training (default = 1.0).'
+        help='Weight for segmentation training (default = 1.0).'
     )
     parser.add_argument(
         '--batch-size',
@@ -104,35 +102,32 @@ def main():
         help='Debugging: add more metrics for detailed analysis.'
     )
     parser.add_argument(
-        '--subset-only',
-        action='store_true',
-        help='Use only subset of classes instead of all.'
-    )
-    parser.add_argument(
         '--freeze-base-epochs',
         type=int,
         default=5,
         help='Freeze base layers for number of epochs.'
     )
     parser.add_argument(
-        '--freeze-ssd',
+        '--freeze-det',
         action='store_true',
-        help='Freeze SSD layers.'
+        help='Freeze object detection layers.'
     )
     parser.add_argument(
-        '--freeze-deeplab',
+        '--freeze-seg',
         action='store_true',
-        help='Freeze DeepLab layers.'
+        help='Freeze segmentation layers.'
     )
     parser.add_argument(
-        '--ssd-only',
-        action='store_true',
-        help='Only train SSDlite model.'
+        '--det-num-classes',
+        type=int,
+        default=11,
+        help='Number of classes for object detection (0 = segmentation only).'
     )
     parser.add_argument(
-        '--deeplab-only',
-        action='store_true',
-        help='Ony train DeepLab model.'
+        '--seg-num-classes',
+        type=int,
+        default=19,
+        help='Number of classes for segmentation (0 = object detection only).'
     )
     parser.add_argument(
         '--use-numpy',
@@ -172,8 +167,14 @@ def main():
     parser.add_argument(
         '--learning-rate',
         type=float,
-        default=1e-3,
+        default=1e-2,
         help='Peak learning rate after warmup.'
+    )
+    parser.add_argument(
+        '--l2-weight',
+        type=float,
+        default=5e-5,
+        help='L2 normalization weight.'
     )
     parser.add_argument(
         '--decay-factor',
@@ -195,15 +196,14 @@ def main():
     num_epochs = args.epochs
     logs = args.logs
     augment = args.augment
-    ssd_weight = args.ssd_weight
-    deeplab_weight = args.deeplab_weight
+    det_weight = args.det_weight
+    seg_weight = args.seg_weight
     batch_size = args.batch_size
-    subset_only = args.subset_only
     freeze_base_epochs = args.freeze_base_epochs
-    freeze_ssd = args.freeze_ssd
-    freeze_deeplab = args.freeze_deeplab
-    ssd_only = args.ssd_only
-    deeplab_only = args.deeplab_only
+    freeze_det = args.freeze_det
+    freeze_seg = args.freeze_seg
+    n_seg = args.seg_num_classes
+    n_det = args.det_num_classes
     use_numpy = args.use_numpy
     model_width = args.model_width
     image_width = args.image_width
@@ -211,23 +211,16 @@ def main():
     warmup_epochs = args.warmup_epochs
     warmup_learning_rate = args.warmup_learning_rate
     learning_rate = args.learning_rate
+    l2_weight = args.l2_weight
     decay_factor = args.decay_factor
     stop_after = args.stop_after
     # checks for consistency
-    if ssd_only and deeplab_only:
-        print("Only one of ssd-only and deeplab-only can be specified.")
+    if n_det == 0 and n_seg == 0:
+        print("Number of classes is 0 for all - no training at all.")
         return
     # create folder for log files
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
-
-    # number of classes
-    if subset_only:
-        n_seg = len(rs19.seg_subset)
-        n_det = len(rs19.det_subset)
-    else:
-        n_seg = len(rs19.seg_classes)
-        n_det = len(rs19.det_classes)
 
     # build model
     models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
@@ -247,10 +240,10 @@ def main():
     deeplab_names = {layer.name for layer in deeplab.layers} - base_names
     ssd_names = {layer.name for layer in ssd.layers} - base_names
 
-    # SSD-only, DeepLab-only?
-    if ssd_only:
+    # No object detection or segmentation?
+    if n_seg == 0:
         model = ssd
-    elif deeplab_only:
+    elif n_det == 0:
         model = deeplab
 
     # load model if provided
@@ -258,20 +251,20 @@ def main():
         model = tf.keras.models.load_model(in_model)
 
     # Loss functions
-    losses = loss_list(SSDLosses(3), DeeplabLoss(), ssd_only, deeplab_only)
+    losses = loss_list(SSDLosses(3), DeeplabLoss(), n_det, n_seg)
     # weights for losses
-    if ssd_only:
-        loss_weights = (ssd_weight, ssd_weight)
-    elif deeplab_only:
-        loss_weights = (deeplab_weight, )
+    if n_seg == 0:
+        loss_weights = (det_weight, det_weight)
+    elif n_det == 0:
+        loss_weights = (seg_weight, )
     else:
-        loss_weights = (ssd_weight, ssd_weight, deeplab_weight)
+        loss_weights = (det_weight, det_weight, seg_weight)
 
     # Freeze weights as requested
-    if freeze_ssd:
+    if freeze_det:
         for l_name in ssd_names:
             model.get_layer(l_name).trainable = False
-    if freeze_deeplab:
+    if freeze_seg:
         for l_name in deeplab_names:
             model.get_layer(l_name).trainable = False
     if freeze_base_epochs != 0:
@@ -284,17 +277,11 @@ def main():
         BBoxUtils = BBoxUtilsNp
     else:
         BBoxUtils = BBoxUtilsTf
-    bbox_util = None if deeplab_only else BBoxUtils(n_det, default_boxes_cw)
-
-    # Number of classes for segmentation
-    if ssd_only:
-        n_seg = 0
+    bbox_util = None if n_det == 0 else BBoxUtils(n_det, default_boxes_cw)
 
     # Load training & validation data
-    train_ds = read_tfrecords(
-            os.path.join(tfrecdir, 'train.tfrec'))
-    val_ds = read_tfrecords(
-            os.path.join(tfrecdir, 'val.tfrec'))
+    train_ds = read_tfrecords(f"{tfrecdir}/train.tfrec", shuffle=True)
+    val_ds = read_tfrecords(f"{tfrecdir}/val.tfrec")
 
     # Augment data
     if augment:
@@ -305,24 +292,15 @@ def main():
         augmentor.random_brightness_contrast()
         train_ds = train_ds.map(augmentor.tf_wrap())
 
-    # Filter for classes of interest
-    if subset_only:
-        ssd_filter = filter_classes_bbox(rs19.det_classes, rs19.det_subset)
-        deeplab_filter = filter_classes_mask(rs19.seg_classes, rs19.seg_subset)
-        if ssd_only:
-            train_ds = train_ds.map(ssd_filter)
-            val_ds = val_ds.map(ssd_filter)
-        elif deeplab_only:
-            train_ds = train_ds.map(deeplab_filter)
-            val_ds = val_ds.map(deeplab_filter)
-        else:
-            train_ds = train_ds.map(ssd_filter).map(deeplab_filter)
-            val_ds = val_ds.map(ssd_filter).map(deeplab_filter)
-
-    # Filter out empty samples - if SSD requested
-    if not deeplab_only:
+    # Filter out empty samples - if object detection requested
+    if n_det > 0:
         train_ds = train_ds.filter(filter_empty_samples)
         val_ds = val_ds.filter(filter_empty_samples)
+
+    # Filter out missing masks - if segmentation requested
+    if n_seg > 0:
+        train_ds = train_ds.filter(filter_no_mask)
+        val_ds = val_ds.filter(filter_no_mask)
 
     # Preprocess data
     if use_numpy:
@@ -336,8 +314,8 @@ def main():
         val_ds = val_ds.map(
             preprocess_tf((model_width, model_width), bbox_util, n_seg))
 
-    # Create batches
-    train_ds_batch = train_ds.batch(batch_size=batch_size)
+    # Shuffle & create batches
+    train_ds_batch = train_ds.shuffle(100).batch(batch_size=batch_size)
     val_ds_batch = val_ds.batch(batch_size=batch_size)
 
     # learning rate
@@ -349,7 +327,7 @@ def main():
     optimizer = tf.keras.optimizers.Adam(learning_rate=lambda: lr)
     # training step
     training_step = get_training_step(model, losses, loss_weights,
-                                      optimizer, ssd_only, deeplab_only)
+                                      optimizer, n_det, n_seg, l2_weight)
 
     # open logfile
     if logs:
@@ -384,10 +362,10 @@ def main():
         for batch in tqdm(train_ds_batch):
             img, gt = batch
             ll = training_step(img, gt)
-            if ssd_only:
+            if n_seg == 0:
                 train_conf_loss += ll[1].numpy()
                 train_locs_loss += ll[2].numpy()
-            elif deeplab_only:
+            elif n_det == 0:
                 train_segs_loss += ll[1].numpy()
             else:
                 train_conf_loss += ll[1].numpy()
@@ -401,9 +379,9 @@ def main():
         train_segs_loss /= train_num
         train_loss /= train_num
         out = [epoch+1, lr, train_time, train_loss.numpy()]
-        if not deeplab_only:
+        if n_det > 0:
             out += [train_conf_loss, train_locs_loss]
-        if not ssd_only:
+        if n_seg > 0:
             out += [train_segs_loss]
         print(f"Epoch {epoch}: lr={lr}, time={train_time}, loss={train_loss}")
         # validation run
@@ -417,10 +395,10 @@ def main():
             img, gt = batch
             pr = model(img)
             ll = losses(gt, pr)
-            if ssd_only:
+            if n_seg == 0:
                 val_conf_loss += ll[0].numpy()
                 val_locs_loss += ll[1].numpy()
-            elif deeplab_only:
+            elif n_det == 0:
                 val_segs_loss += ll[0].numpy()
             else:
                 val_conf_loss += ll[0].numpy()
@@ -434,9 +412,9 @@ def main():
         val_segs_loss /= val_num
         val_loss /= val_num
         out += [val_time, val_loss.numpy()]
-        if not deeplab_only:
+        if n_det > 0:
             out += [val_conf_loss, val_locs_loss]
-        if not ssd_only:
+        if n_seg > 0:
             out += [val_segs_loss]
         print(f"Epoch {epoch}: val. time={val_time}, val. loss={val_loss}")
         if logs:

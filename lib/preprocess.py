@@ -44,11 +44,15 @@ def class_indices(classes: List[str], subset: List[List]) -> List[int]:
     return indices
 
 
-def filter_empty_samples(image, boxes_cl, boxes_xy, mask, name):
+def filter_empty_samples(image, boxes_cl, boxes_xy, mask, has_mask, name):
     return tf.math.greater(tf.shape(boxes_cl)[0], tf.constant(0))
 
 
-def filter_classes_bbox(classes: List[str], subset: List[List]):
+def filter_no_mask(image, boxes_cl, boxes_xy, mask, has_mask, name):
+    return has_mask
+
+
+def subset_det_classes(classes: List[str], subset: List[List]):
     """Filter bounding boxes to be only for a specific set of classes.
 
     Args:
@@ -61,7 +65,7 @@ def filter_classes_bbox(classes: List[str], subset: List[List]):
         raise ValueError(f"Background '{classes[0]}' must map to 0")
     tf_indices = tf.convert_to_tensor(indices, tf.uint8)
 
-    def _do_filter(boxes_cl, boxes_xy):
+    def _subset(boxes_cl, boxes_xy):
         # convert classes to subset
         boxes_cl = tf.nn.embedding_lookup(
             tf_indices,
@@ -72,14 +76,14 @@ def filter_classes_bbox(classes: List[str], subset: List[List]):
         cl_mask.set_shape([None])
         return boxes_cl[cl_mask], boxes_xy[cl_mask]
 
-    def _filter_wrap(image, boxes_cl, boxes_xy, mask, name):
-        ret_cl, ret_xy = _do_filter(boxes_cl, boxes_xy)
-        return image, ret_cl, ret_xy, mask, name
+    def _subset_wrap(image, boxes_cl, boxes_xy, mask, has_mask, name):
+        ret_cl, ret_xy = _subset(boxes_cl, boxes_xy)
+        return image, ret_cl, ret_xy, mask, has_mask, name
 
-    return _filter_wrap
+    return _subset_wrap
 
 
-def filter_classes_mask(classes: List[str], subset: List[str]):
+def subset_seg_classes(classes: List[str], subset: List[str]):
     """Filter segmentation mask to be only for a specific set of classes.
 
     Args:
@@ -95,16 +99,16 @@ def filter_classes_mask(classes: List[str], subset: List[str]):
         indices.append(0)
     tf_indices = tf.convert_to_tensor(indices, tf.uint8)
 
-    def _do_filter(mask):
+    def _subset(mask):
         # convert classes to subset
         mask = tf.gather(tf_indices, tf.cast(mask, tf.int32))
         return mask
 
-    def _filter_wrap(image, boxes_cl, boxes_xy, mask, name):
-        ret_mask = _do_filter(mask)
-        return image, boxes_cl, boxes_xy, ret_mask, name
+    def _subset_wrap(image, boxes_cl, boxes_xy, mask, has_mask, name):
+        ret_mask = _subset(mask)
+        return image, boxes_cl, boxes_xy, ret_mask, has_mask, name
 
-    return _filter_wrap
+    return _subset_wrap
 
 
 def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
@@ -118,7 +122,7 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
             image segmentation.
 """
 
-    def _preprocess_ssd_np(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_ssd_np(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # scale image color values to [0, 1] range
@@ -134,7 +138,7 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
         # return preprocessed image & data
         return image, gt_clss, gt_locs
 
-    def _preprocess_deeplab(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_deeplab(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # scale image color values to [0, 1] range
@@ -149,7 +153,7 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
         # return preprocessed image & data
         return image, mask
 
-    def _preprocess_both_np(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_both_np(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # scale image color values to [0, 1] range
@@ -172,19 +176,19 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
         # return preprocessed image & data
         return image, gt_clss, gt_locs, mask
 
-    def _preprocess_ssd(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_ssd(image, boxes_cl, boxes_xy, mask, has_mask, name):
         image, gt_clss, gt_locs = tf.py_function(
             _preprocess_ssd_np,
-            (image, boxes_cl, boxes_xy, mask, name),
+            (image, boxes_cl, boxes_xy, mask, has_mask, name),
             (tf.float32, tf.int64, tf.float32)
         )
         image.set_shape((size[0], size[1], 3))
         return image, (gt_clss, gt_locs)
 
-    def _preprocess_both(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_both(image, boxes_cl, boxes_xy, mask, has_mask, name):
         image, gt_clss, gt_locs, mask = tf.py_function(
             _preprocess_both_np,
-            (image, boxes_cl, boxes_xy, mask, name),
+            (image, boxes_cl, boxes_xy, mask, has_mask, name),
             (tf.float32, tf.int64, tf.float32, tf.uint8)
         )
         image.set_shape((size[0], size[1], 3))
@@ -210,21 +214,27 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
             image segmentation.
 """
 
-    def _preprocess_ssd(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_det(image, boxes_cl, boxes_xy, mask, has_mask, name):
+        from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # scale image color values to [-1, 1] range
+        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
         # map defaults to boxes
+        gt_clss, gt_locs = compute_target(
+            bbox_utils.default_boxes_cw,
+            boxes_xy,
+            boxes_cl,
+            )
         gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
         # return preprocessed image & data
         return image, (gt_clss, gt_locs)
 
-    def _preprocess_deeplab(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_seg(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # scale image color values to [-1, 1] range
+        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -235,13 +245,19 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
         # return preprocessed image & data
         return image, mask
 
-    def _preprocess_both(image, boxes_cl, boxes_xy, mask, name):
+    def _preprocess_both(image, boxes_cl, boxes_xy, mask, has_mask, name):
+        from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # scale image color values to [-1, 1] range
+        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
         # map defaults to boxes
-        gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
+        # gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
+        gt_clss, gt_locs = compute_target(
+            bbox_utils.default_boxes_cw,
+            boxes_xy,
+            boxes_cl,
+            )
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -253,8 +269,8 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
         return image, (gt_clss, gt_locs, mask)
 
     if bbox_utils is None:
-        return _preprocess_deeplab
+        return _preprocess_seg
     elif n_seg == 0:
-        return _preprocess_ssd
+        return _preprocess_det
     else:
         return _preprocess_both

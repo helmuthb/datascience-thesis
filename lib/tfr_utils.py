@@ -40,6 +40,7 @@ feature_description = {
     'image/object/class/text': tf.io.VarLenFeature(tf.string),
     'image/object/class/label': tf.io.VarLenFeature(tf.int64),
     'image/segmentation/mask': tf.io.FixedLenFeature([], tf.string),
+    'image/segmentation/has_mask': tf.io.FixedLenFeature([], tf.int64, 1),
 }
 
 
@@ -93,7 +94,7 @@ def img_to_example(filename, metadata, objects, pngfile):
         filename (string): Full path to the image file.
         metadata (dict): Metadata like name, width and height of the image.
         objects (list): List of bounding boxes defined in the image.
-        pngfile (string): Full path to the segmentation (8bit PNG).
+        pngfile (string): Full path to the segmentation (8bit PNG) or None.
     Returns:
         example (bytes): The serialized TensorFlow example.
     """
@@ -104,11 +105,21 @@ def img_to_example(filename, metadata, objects, pngfile):
     boxes_y1 = [b.y1 for b in objects]
     boxes_cl = [b.cl for b in objects]
     boxes_lb = [b.lb for b in objects]
-    seg_string = load_file(pngfile)
+    h = int(metadata['height'])
+    w = int(metadata['width'])
+
+    # optionally add mask (if exists)
+    if pngfile:
+        seg_string = load_file(pngfile)
+        has_mask = True
+    else:
+        image = tf.zeros((h, w, 1), dtype=tf.uint8)
+        seg_string = tf.image.encode_png(image).numpy()
+        has_mask = False
 
     feature = {
-        'image/height': int64_feature(metadata['height']),
-        'image/width': int64_feature(metadata['width']),
+        'image/height': int64_feature(h),
+        'image/width': int64_feature(w),
         'image/filename': bytes_feature(metadata['name']),
         'image/source_id': bytes_feature(metadata['name']),
         'image/encoded': bytes_feature(image_string),
@@ -120,6 +131,7 @@ def img_to_example(filename, metadata, objects, pngfile):
         'image/object/class/text': bytes_feature(boxes_lb),
         'image/object/class/label': int64_feature(boxes_cl),
         'image/segmentation/mask': bytes_feature(seg_string),
+        'image/segmentation/has_mask': int64_feature(has_mask),
     }
     ex = tf.train.Example(features=tf.train.Features(feature=feature))
     return ex.SerializeToString()
@@ -134,6 +146,7 @@ def img_from_example(example):
         bboxes (tf.Tensor): Bounding boxes of the image.
         classes (tf.Tensor): Numeric object classes of the image.
         mask (tf.Tensor): Segmentation mask of the image.
+        has_mask (tf.Tensor): Boolean whether a segmentation mask exists.
         name (tf.string): Name of the image.
     """
     # parse the image data
@@ -143,6 +156,7 @@ def img_from_example(example):
     image = tf.cast(tf.image.decode_jpeg(jpeg, channels=3), tf.float32)
     png = data['image/segmentation/mask']
     mask = tf.image.decode_png(png, channels=1)
+    has_mask = tf.cast(data['image/segmentation/has_mask'], dtype=tf.bool)
     # fetch classes
     classes = data['image/object/class/label'].values
     # create bounding boxes
@@ -152,7 +166,7 @@ def img_from_example(example):
     y1_part = tf.expand_dims(data['image/object/bbox/ymax'].values, 1)
     bboxes = tf.concat([x0_part, y0_part, x1_part, y1_part], 1)
     # return image, classes & bboxes
-    return image, classes, bboxes, mask, name
+    return image, classes, bboxes, mask, has_mask, name
 
 
 def write_tfrecords(rows, out_file, num_shards, verbose=True):
@@ -195,67 +209,17 @@ def write_tfrecords(rows, out_file, num_shards, verbose=True):
         writer.write(example)
 
 
-def read_tfrecords(file):
+def read_tfrecords(file, shuffle=False):
     """Create a tf.data.Dataset from a file.
     The name provided is assumed to be the base name used for sharded
     write.
 
     Args:
         file (string): Name of the TFRecord file to be read.
+        shuffle (boolean): Whether the order of files shall be random.
     Returns:
         dataset (tf.data.Dataset): Dataset with image and metadata.
     """
-    file_names = tf.data.Dataset.list_files(f"{file}-*")
+    file_names = tf.data.Dataset.list_files(f"{file}-*", shuffle=shuffle)
     dataset_raw = tf.data.TFRecordDataset(file_names)
     return dataset_raw.map(img_from_example)
-
-
-def parse_json(json_data, classes):
-    """Parse JSON file for objects.
-    Args:
-        json_data (object): Data from JSON-file for a record.
-        classes (list): List of classes, starting with 'background'.
-    Returns:
-        metadata (dict): Metadata about the image.
-        objects (list): Bounding boxes with label index
-    """
-    image_width = json_data["imgWidth"]
-    image_height = json_data["imgHeight"]
-
-    objects = []
-    frame = json_data["frame"]
-    for o in json_data["objects"]:
-        label = o["label"]
-        # we focus on object detection
-        if "boundingbox" not in o:
-            continue
-        bb = o["boundingbox"]
-        x0 = bb[0] / image_width
-        y0 = bb[1] / image_height
-        x1 = bb[2] / image_width
-        y1 = bb[3] / image_height
-        # check for plausibility
-        is_ok = True
-        if x0 >= x1 or y0 >= y1:
-            print(f"Frame {frame} has empty bounding box for label {label}")
-            is_ok = False
-        if label not in classes:
-            print(f"Frame {frame} contains unknown label {label}")
-            is_ok = False
-        if not is_ok:
-            # skip this bounding box
-            continue
-        box = BBox(classes.index(label), label, x0, y0, x1, y1)
-        objects.append(box)
-    # no box found? add background box
-    if len(objects) == 0:
-        box = BBox(0, 'background', 0., 0., 1., 1.)
-        objects.append(box)
-    # prepare meta data
-    meta = {
-        'format': 'jpg',
-        'width': image_width,
-        'height': image_height,
-        'name': frame
-    }
-    return meta, objects

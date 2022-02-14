@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-This file allows conversion of RailSem19 data to TensorFlow records.
+This file allows conversion of Pascal VOC data to TensorFlow records.
 """
 
 import os
 import random
 import argparse
-import json
 
 import numpy as np
+import xml.etree.ElementTree as ET
 
 from lib.tfr_utils import write_tfrecords, BBox
 
@@ -25,37 +25,36 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def parse_json(json_data, classes):
-    """Parse JSON file for objects.
+def parse_xml(name, xml_data, classes):
+    """Parse XML file for objects.
     Args:
-        json_data (object): Data from JSON-file for a record.
+        name (str): Name of image (without suffix).
+        xml_data (object): Data from XML-file for a record.
         classes (list): List of classes, starting with 'background'.
     Returns:
         metadata (dict): Metadata about the image.
         objects (list): Bounding boxes with label index
     """
-    image_width = json_data["imgWidth"]
-    image_height = json_data["imgHeight"]
+    size = xml_data.find("size")
+    image_width = int(float(size.find("width").text))
+    image_height = int(float(size.find("height").text))
+    fname = xml_data.find("filename").text
 
     objects = []
-    frame = json_data["frame"]
-    for o in json_data["objects"]:
-        label = o["label"]
-        # we focus on object detection
-        if "boundingbox" not in o:
-            continue
-        bb = o["boundingbox"]
-        x0 = bb[0] / image_width
-        y0 = bb[1] / image_height
-        x1 = bb[2] / image_width
-        y1 = bb[3] / image_height
+    for o in xml_data.findall("object"):
+        label = o.find("name").text
+        bb = o.find("bndbox")
+        x0 = int(float(bb.find("xmin").text)) / image_width
+        y0 = int(float(bb.find("ymin").text)) / image_height
+        x1 = int(float(bb.find("xmax").text)) / image_width
+        y1 = int(float(bb.find("ymax").text)) / image_height
         # check for plausibility
         is_ok = True
         if x0 >= x1 or y0 >= y1:
-            print(f"Frame {frame} has empty bounding box for label {label}")
+            print(f"Frame {name} has empty bounding box for label {label}")
             is_ok = False
         if label not in classes:
-            print(f"Frame {frame} contains unknown label {label}")
+            print(f"Frame {name} contains unknown label {label}")
             is_ok = False
         if not is_ok:
             # skip this bounding box
@@ -71,34 +70,36 @@ def parse_json(json_data, classes):
         'format': 'jpg',
         'width': image_width,
         'height': image_height,
-        'name': frame
+        'name': name,
+        'file': fname,
     }
     return meta, objects
 
 
-def read_folder(root, det_classes):
+def read_folder(root, year, det_classes):
     """Create data list from the root folder.
     Args:
-        root (string): Root folder of RailSem19.
+        root (string): Root folder of Pascal data set.
+        year (string): Year of Pascal data set.
         det_classes (list[string]): List of detection class names.
     Returns:
         dataset (list(dict)): Data represented by {'image_path', 'objects'}.
     """
-    jpegs_path = os.path.join(root, 'jpgs/rs19_val')
-    jsons_path = os.path.join(root, 'jsons/rs19_val')
-    masks_path = os.path.join(root, 'uint8/rs19_val')
-
+    annotations = f"{root}/VOC{year}/Annotations"
+    jpegs_path = f"{root}/VOC{year}/JPEGImages"
+    png_path = f"{root}/VOC{year}/SegmentationClass"
     dataset = list()
-    for f in os.listdir(jsons_path):
-        # read JSON file
-        with open(os.path.join(jsons_path, f), 'r') as json_file:
-            json_data = json.loads(json_file.read())
-        # parse objects
-        metadata, objects = parse_json(json_data, det_classes)
+    for f in os.listdir(annotations):
+        # read XML file
+        path = f"{annotations}/{f}"
+        xml_data = ET.parse(path)
+        name = os.path.splitext(f)[0]
+        metadata, objects = parse_xml(name, xml_data, det_classes)
         # get JPEG file path
-        frame = json_data['frame']
-        jpeg_path = os.path.join(jpegs_path, frame + ".jpg")
-        mask_path = os.path.join(masks_path, frame + ".png")
+        jpeg_path = f"{jpegs_path}/{metadata['file']}"
+        mask_path = f"{png_path}/{metadata['name']}.png"
+        if not os.path.exists(mask_path):
+            mask_path = None
         # append info to dataset
         dataset.append({
             'image_path': jpeg_path,
@@ -110,7 +111,7 @@ def read_folder(root, det_classes):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Make RailSem19 dataset TFRecords."
+        description="Make Pascal dataset TFRecords."
     )
     parser.add_argument(
         '--det-classes',
@@ -121,7 +122,13 @@ def main():
     parser.add_argument(
         '--source',
         type=str,
-        help="Root directory of RailSem19 dataset.",
+        help="Root directory of Pascal dataset.",
+        required=True
+    )
+    parser.add_argument(
+        '--year',
+        type=str,
+        help="Pascal year (2007 or 2012)",
         required=True
     )
     parser.add_argument(
@@ -152,7 +159,7 @@ def main():
         classes = f.read().splitlines()
 
     # Create data list from source folder
-    data = read_folder(args.source, classes)
+    data = read_folder(args.source, args.year, classes)
     # shuffle dataset
     n = len(data)
     shuffled_index = np.arange(n)

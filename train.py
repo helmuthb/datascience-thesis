@@ -1,8 +1,10 @@
 import csv
+from inspect import getsourcefile
 import os
 import time
 import argparse
 from numpy import infty
+import yaml
 
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
@@ -135,10 +137,10 @@ def main():
         help='Use (slower) numpy for encoding of ground truth.'
     )
     parser.add_argument(
-        '--model-width',
-        type=int,
-        default=224,
-        help='Specify image width for model.'
+        '--model-config',
+        type=str,
+        help='Specify configuration yaml file for model.',
+        required=True
     )
     parser.add_argument(
         '--image-width',
@@ -205,7 +207,7 @@ def main():
     n_seg = args.seg_num_classes
     n_det = args.det_num_classes
     use_numpy = args.use_numpy
-    model_width = args.model_width
+    model_config = args.model_config
     image_width = args.image_width
     image_height = args.image_height
     warmup_epochs = args.warmup_epochs
@@ -222,8 +224,19 @@ def main():
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
 
+    # read model config
+    if not os.path.exists(model_config):
+        # current script folder ...
+        folder = os.path.dirname(getsourcefile(main))
+        model_config = f"{folder}/config/{model_config}.cfg"
+    with open(model_config, 'r') as cf:
+        config = yaml.safe_load(cf)
+
+    # load model width from config
+    model_width = config['width']
+
     # build model
-    models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
+    models = ssd_deeplab_model(n_det, n_seg, config)
     model, default_boxes_cw, base, deeplab, ssd = models
 
     if plot_dir:

@@ -1,6 +1,8 @@
+from inspect import getsourcefile
 import os
 import argparse
 import timeit
+import yaml
 
 import tensorflow as tf
 import cv2
@@ -59,10 +61,10 @@ def main():
         help='Use (slower) numpy for encoding of ground truth.'
     )
     parser.add_argument(
-        '--model-width',
-        type=int,
-        default=224,
-        help='Specify image width for model'
+        '--model-config',
+        type=str,
+        help='Specify configuration yaml file for model.',
+        required=True
     )
     parser.add_argument(
         '--image-width',
@@ -83,7 +85,7 @@ def main():
     det_classes = args.det_classes
     seg_classes = args.seg_classes
     use_numpy = args.use_numpy
-    model_width = args.model_width
+    model_config = args.model_config
     image_width = args.image_width
     image_height = args.image_height
     # create output directories if missing
@@ -108,8 +110,19 @@ def main():
             seg_names = f.read().splitlines()
         n_seg = len(seg_names)
 
-    # build model
-    models = ssd_deeplab_model((model_width, model_width), n_det, n_seg)
+    # read model config
+    if not os.path.exists(model_config):
+        # current script folder ...
+        folder = os.path.dirname(getsourcefile(main))
+        model_config = f"{folder}/config/{model_config}.cfg"
+    with open(model_config, 'r') as cf:
+        config = yaml.safe_load(cf)
+
+    # load model width from config
+    model_width = config['width']
+
+    # build model (we only need the default boxes)
+    models = ssd_deeplab_model(n_det, n_seg, config)
     _, default_boxes_cw, _, _, _ = models
 
     # Bounding box utility object

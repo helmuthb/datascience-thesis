@@ -1,28 +1,32 @@
+from typing import Callable
 import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Optimizer
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
 
 from lib.ssdlite import (
-    add_ssdlite_features, detection_head, get_default_boxes_cw,
-    ssdlite_base_layers)
+    detection_heads, get_default_boxes_cw, ssdlite_base_outputs)
 from lib.deeplab import add_deeplab_features
 
 
-def ssd_deeplab_model(size, n_det, n_seg):
+def ssd_deeplab_model(n_det: int, n_seg: int, config: dict) -> tuple:
     """
     """
-    input_layer = tf.keras.layers.Input(
-        shape=(size[0], size[1], 3))
+    width = config['width']
+    input_layer = tf.keras.layers.Input(shape=(width, width, 3))
     # base model
-    base = MobileNetV2(
-        input_tensor=input_layer,
-        include_top=False)
+    if config['base'] == "MobileNetV2":
+        base = MobileNetV2(
+            input_tensor=input_layer,
+            include_top=False)
+    else:
+        raise ValueError(f"Base model '{config['base']}' unknown")
     # add deeplab layers
     deeplab_output = add_deeplab_features(base, n_seg)
     # add SSDlite layers
-    ext_base = add_ssdlite_features(base)
-    l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
+    ssd_outputs_raw = ssdlite_base_outputs(base, config)
     # add class and location predictions
-    ssd_outputs = detection_head(n_det, l1, l2, l3, l4, l5, l6)
+    ssd_outputs = detection_heads(n_det, ssd_outputs_raw, config)
     # create models
     ssd_model = tf.keras.Model(
         inputs=input_layer,
@@ -37,12 +41,13 @@ def ssd_deeplab_model(size, n_det, n_seg):
         inputs=input_layer,
         outputs=combined_outputs)
     # calculate default boxes
-    default_boxes_cw = get_default_boxes_cw(l1, l2, l3, l4, l5, l6)
+    default_boxes_cw = get_default_boxes_cw(ssd_outputs_raw, config)
     # return combined model and the defaults
     return combined_model, default_boxes_cw, base, deeplab_model, ssd_model
 
 
-def loss_list(ssd_f, deeplab_f, n_det, n_seg):
+def loss_list(ssd_f: Callable, deeplab_f: Callable,
+              n_det: int, n_seg: int) -> Callable:
     def _losses_combined(gt, pr):
         ssd_losses = ssd_f(gt[0], gt[1], pr[0], pr[1])
         deeplab_loss = deeplab_f(gt[2], pr[2])
@@ -62,8 +67,9 @@ def loss_list(ssd_f, deeplab_f, n_det, n_seg):
         return _losses_combined
 
 
-def get_training_step(model, losses, weights, optimizer,
-                      n_det, n_seg, alpha=5e-4):
+def get_training_step(model: Model, losses: Callable, weights: list,
+                      optimizer: Optimizer,
+                      n_det: int, n_seg: int, alpha: float):
     w = tf.convert_to_tensor(weights, dtype=tf.float32)
     a = tf.convert_to_tensor(alpha, dtype=tf.float32)
 

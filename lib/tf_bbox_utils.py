@@ -368,7 +368,7 @@ class BBoxUtils(object):
         # idx = idx.numpy()
         # indexes selected so far
         selected = []
-        for pos in min(self.top_k, range(n)):
+        for pos in range(min(self.top_k, n)):
             if boxes_sc[pos] < self.min_confidence:
                 # go to next position
                 continue

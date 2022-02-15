@@ -330,22 +330,30 @@ def main():
             num_parallel_calls=tf.data.AUTOTUNE
         )
         val_ds = val_ds.map(
-            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg))
+            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
     else:
         train_ds = train_ds.map(
             preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
             num_parallel_calls=tf.data.AUTOTUNE
         )
         val_ds = val_ds.map(
-            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg))
+            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
 
     # Shuffle & create batches
-    train_ds_batch = (train_ds
-        .shuffle(100)
-        .prefetch(tf.data.AUTOTUNE)
-        .batch(batch_size=batch_size)
+    train_ds_batch = (
+        train_ds.shuffle(100)
+                .prefetch(tf.data.AUTOTUNE)
+                .batch(batch_size=batch_size)
     )
-    val_ds_batch = val_ds.batch(batch_size=batch_size)
+    val_ds_batch = (
+        val_ds.prefetch(tf.data.AUTOTUNE)
+              .cache()
+              .batch(batch_size=batch_size)
+    )
 
     # learning rate
     if warmup_epochs > 0:
@@ -416,7 +424,8 @@ def main():
             out += [train_conf_loss, train_locs_loss]
         if n_seg > 0:
             out += [train_segs_loss]
-        print(f"Epoch {epoch+1}: lr={lr}, time={train_time}, loss={train_loss}")
+        print(f"Epoch {epoch+1}: lr={lr}, time={train_time}, "
+              f"loss={train_loss}")
         # validation run
         val_conf_loss = 0.0
         val_locs_loss = 0.0

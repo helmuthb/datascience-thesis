@@ -115,8 +115,8 @@ class BBoxUtils(object):
     """
     def __init__(self, n_classes, default_boxes_cw,
                  variances=(.1, .2), min_pos_iou=.5,
-                 max_neg_iou=.3, min_area=0.00001, min_confidence=0.2,
-                 iou_threshold=0.5, top_k=200):
+                 max_neg_iou=.1, min_area=0.00001, min_confidence=0.4,
+                 iou_threshold=.5, top_k=200):
         """Create BBoxUtils object.
 
         The parameters are used thoughout the object detection process.

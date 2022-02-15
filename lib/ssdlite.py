@@ -12,7 +12,6 @@ import numpy as np
 from tensorflow.keras.models import Model
 
 from .layers import bottleneck, depthwise_bn_relu6
-from .mobilenet import mobilenetv2
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -26,16 +25,16 @@ __status__ = 'Experimental'
 
 
 # A-priori object scales to use for default prediction boxes
-OBJ_SCALES = [0.1, 0.2, 0.375, 0.55, 0.725, 0.9]
+OBJ_SCALES = [0.2, 0.4, 0.55, 0.7, 0.8, 0.9]
 
 # A-priori aspect ratios to use for default prediction boxes
 ASPECT_RATIOS = [
-    [1., 2., 0.5],
     [1., 2., 3., 0.5, 1./3.],
     [1., 2., 3., 0.5, 1./3.],
     [1., 2., 3., 0.5, 1./3.],
-    [1., 2., 0.5],
-    [1., 2., 0.5]
+    [1., 2., 3., 0.5, 1./3.],
+    [1., 2., 3., 0.5, 1./3.],
+    [1., 2., 3., 0.5, 1./3.]
 ]
 
 
@@ -93,8 +92,8 @@ def ssdlite_base_layers(model: Model):
     return layer1, layer2, layer3, layer4, layer5, layer6
 
 
-def get_num_default_boxes():
-    """Get the number of default boxes.
+def get_num_default_ratios():
+    """Get the number of default box ratios.
 
     For each layer and aspect ratio, add 1.
     In addition, for each layer add one default box with the
@@ -102,9 +101,43 @@ def get_num_default_boxes():
     This explains the below formula.
 
     Returns:
-        num_default_boxes (list(int)): Number of default boxes per layer
+        num_default_ratios (list(int)): Number of default ratios per layer.
     """
     return [len(a)+1 for a in ASPECT_RATIOS]
+
+
+def head_layer(prefix, index, n_out, n_boxes, inp):
+    """Head layer creating the boxes / class scores.
+    Args:
+        prefix (str): Prefix ("classes" or "boxes").
+        index (int): Number of layer.
+        n_out (int): Either 4 (for boxes) or number of classes.
+        n_boxes (int): Number of default boxes to output.
+        inp (tf.keras.layers.Layer): Layer input.
+    Returns:
+        layer (tf.keras.layers.Layer): Output layer
+            of size [N, n_boxes, n_out].
+    """
+    dw_relu = depthwise_bn_relu6(
+        inputs=inp.output,
+        name=f"{prefix}_dw{index}",
+        strides=1
+    )
+    conv_2d = tf.keras.layers.Conv2D(
+        filters=n_out * n_boxes,
+        kernel_size=1,
+        name=f"{prefix}_conv{index}"
+    )(dw_relu)
+    bn = tf.keras.layers.BatchNormalization(
+        epsilon=1e-3,
+        momentum=0.999,
+        name=f"{prefix}_bn{index}"
+    )(conv_2d)
+    reshape = tf.keras.layers.Reshape(
+        [-1, n_out],
+        name=f"{prefix}_reshape{index}"
+    )(bn)
+    return reshape
 
 
 def detection_head(n_classes, *layers):
@@ -113,66 +146,27 @@ def detection_head(n_classes, *layers):
         n_classes (int): Number of classes to predict.
         l (6*tuple): Tuple of layers from MobileNetV2 & SSDLite.
     Returns:
-        layer (tf.keras.layers.Layer): Combined output layer
-            of size [N, n_defaults, 4+n_classes].
-            The first 4 in the last dimension are for
-            bounding boxes, the remaining are for the classes.
+        classes (tf.keras.layers.Layer): Output layer for classes
+            of size [N, n_defaults, n_classes].
+        boxes (tf.keras.layers.Layer): Output layer for boxes
+            of size [N, n_defaults, 4].
     """
     # Number of default boxes per layer to consider
-    n_defaults = get_num_default_boxes()
+    n_defaults = get_num_default_ratios()
     # Outputs for class predictions
     out_classes = []
-    for i, n_a, layer in zip(range(6), n_defaults, layers):
-        dw_relu = depthwise_bn_relu6(
-            inputs=layer.output,
-            name=f"classes_dw{i}",
-            strides=1
-        )
-        conv_2d = tf.keras.layers.Conv2D(
-            filters=n_a * n_classes,
-            kernel_size=1,
-            name=f"classes_conv{i}"
-        )(dw_relu)
-        bn = tf.keras.layers.BatchNormalization(
-            epsilon=1e-3,
-            momentum=0.999,
-            name=f"classes_bn{i}"
-        )(conv_2d)
-        reshape = tf.keras.layers.Reshape(
-            [-1, n_classes],
-            name=f"classes_reshape{i}"
-        )(bn)
-        out_classes.append(reshape)
+    for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
+        out = head_layer("classes", i, n_classes, n_a, layer)
+        out_classes.append(out)
     # concatenate
     classes = tf.keras.layers.Concatenate(axis=1, name='ssd_conf_output')(
         out_classes
     )
-    # softmax activation for classes
-    # not done here as the softmax activation is part of the loss function
-    # classes = tf.keras.layers.Softmax(name="classes_softmax")(classes)
     # Outputs for bounding boxes
     out_boxes = []
-    for i, n_a, layer in zip(range(6), n_defaults, layers):
-        dw_relu = depthwise_bn_relu6(
-            inputs=layer.output,
-            name=f"boxes_dw{i}",
-            strides=1
-        )
-        conv_2d = tf.keras.layers.Conv2D(
-            filters=n_a * 4,
-            kernel_size=1,
-            name=f"boxes_conv{i}"
-        )(dw_relu)
-        bn = tf.keras.layers.BatchNormalization(
-            epsilon=1e-3,
-            momentum=0.999,
-            name=f"boxes_bn{i}"
-        )(conv_2d)
-        reshape = tf.keras.layers.Reshape(
-            [-1, 4],
-            name=f"boxes_reshape{i}"
-        )(bn)
-        out_boxes.append(reshape)
+    for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
+        out = head_layer("boxes", i, 4, n_a, layer)
+        out_boxes.append(out)
     # concatenate
     boxes = tf.keras.layers.Concatenate(axis=1, name='ssd_bbox_output')(
         out_boxes
@@ -207,31 +201,3 @@ def get_default_boxes_cw(*layers):
             boxes.append([x, y, additional_scale, additional_scale])
     # clip the result
     return tf.convert_to_tensor(np.clip(boxes, 0., 1.), dtype=tf.float32)
-
-
-def ssdlite(input_shape, n_classes):
-    """Get SSDLite model and default boxes.
-
-    Args:
-        input_shape (list(integer)): (height, width).
-        n_classes (integer): Number of classes.
-    Returns:
-        ssdlite (tf.keras model): SSDLite model, with added loss.
-        defaults (float array, [n_priors, 4]): All the default boxes
-            ((x, y, w, h) within [0., 1.]).
-    """
-    input_layer = tf.keras.layers.Input(
-        shape=(input_shape[0], input_shape[1], 3))
-    # Base model
-    base = mobilenetv2(input_layer)
-    print(base.summary())
-    ext_base = add_ssdlite_features(base)
-    l1, l2, l3, l4, l5, l6 = ssdlite_base_layers(ext_base)
-    # add confidence and location predictions
-    conf, locs = detection_head(n_classes, l1, l2, l3, l4, l5, l6)
-    # create model
-    model = tf.keras.Model(inputs=input_layer, outputs=(locs, conf))
-    # calculate default boxes
-    default_boxes_cw = get_default_boxes_cw(l1, l2, l3, l4, l5, l6)
-    # return both
-    return model, default_boxes_cw

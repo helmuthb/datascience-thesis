@@ -52,6 +52,8 @@ def conv_bn_relu6(
     bn = BatchNormalization(
             epsilon=1e-3,
             momentum=0.999,
+            beta_initializer='glorot_uniform',
+            gamma_initializer='glorot_uniform',
             name=f"{name}_bn"
         )(conv)
     return ReLU(6., name=f"{name}_relu6")(bn)
@@ -71,6 +73,8 @@ def depthwise_bn_relu6(inputs, name, strides, dilation_rate=1, padding='same'):
     bn = BatchNormalization(
             epsilon=1e-3,
             momentum=0.999,
+            beta_initializer='glorot_uniform',
+            gamma_initializer='glorot_uniform',
             name=f"{name}_bn")(conv)
     return ReLU(6., name=f"{name}_relu6")(bn)
 
@@ -160,7 +164,7 @@ class AdaptiveAvgPool2D(Layer):
     def build(self, input_shape):
         self.avg_layer = AveragePooling2D(
             pool_size=input_shape[1:3],
-            padding="valid"  # no padding
+            padding='valid'  # no padding
         )
 
     def call(self, inputs):

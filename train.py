@@ -304,7 +304,10 @@ def main():
         augmentor.horizontal_flip()
         augmentor.hsv()
         augmentor.random_brightness_contrast()
-        train_ds = train_ds.map(augmentor.tf_wrap())
+        train_ds = train_ds.map(
+            augmentor.tf_wrap(),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
 
     # Filter out empty samples - if object detection requested
     if n_det > 0:
@@ -323,17 +326,25 @@ def main():
     # Preprocess data
     if use_numpy:
         train_ds = train_ds.map(
-            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg))
+            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
         val_ds = val_ds.map(
             preprocess_np(prep, (model_width, model_width), bbox_util, n_seg))
     else:
         train_ds = train_ds.map(
-            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg))
+            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
         val_ds = val_ds.map(
             preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg))
 
     # Shuffle & create batches
-    train_ds_batch = train_ds.shuffle(100).batch(batch_size=batch_size)
+    train_ds_batch = (train_ds
+        .shuffle(100)
+        .prefetch(tf.data.AUTOTUNE)
+        .batch(batch_size=batch_size)
+    )
     val_ds_batch = val_ds.batch(batch_size=batch_size)
 
     # learning rate

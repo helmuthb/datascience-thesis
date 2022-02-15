@@ -1,5 +1,6 @@
 import csv
 from inspect import getsourcefile
+import math
 import os
 import time
 import argparse
@@ -315,6 +316,10 @@ def main():
         train_ds = train_ds.filter(filter_no_mask)
         val_ds = val_ds.filter(filter_no_mask)
 
+    # Count elements
+    epoch_size = sum(1 for _ in train_ds)
+    num_batches = math.ceil(epoch_size / batch_size)
+
     # Preprocess data
     if use_numpy:
         train_ds = train_ds.map(
@@ -372,7 +377,11 @@ def main():
         train_loss = 0.0
         train_num = 0
         start_time = time.time()
-        for batch in tqdm(train_ds_batch):
+        for batch in tqdm(
+                iterable=train_ds_batch,
+                desc=f"Epoch {epoch+1}",
+                unit='bt',
+                total=num_batches):
             img, gt = batch
             ll = training_step(img, gt)
             if n_seg == 0:
@@ -396,7 +405,7 @@ def main():
             out += [train_conf_loss, train_locs_loss]
         if n_seg > 0:
             out += [train_segs_loss]
-        print(f"Epoch {epoch}: lr={lr}, time={train_time}, loss={train_loss}")
+        print(f"Epoch {epoch+1}: lr={lr}, time={train_time}, loss={train_loss}")
         # validation run
         val_conf_loss = 0.0
         val_locs_loss = 0.0
@@ -429,7 +438,7 @@ def main():
             out += [val_conf_loss, val_locs_loss]
         if n_seg > 0:
             out += [val_segs_loss]
-        print(f"Epoch {epoch}: val. time={val_time}, val. loss={val_loss}")
+        print(f"Epoch {epoch+1}: val. time={val_time}, val. loss={val_loss}")
         if logs:
             csv_writer.writerow(out)
             csv_file.flush()
@@ -439,7 +448,7 @@ def main():
             min_loss = val_loss
             model.save(out_model)
             non_improved = 0
-        else:
+        elif epoch > warmup_epochs:
             lr *= decay_factor
             non_improved += 1
         if non_improved >= stop_after:

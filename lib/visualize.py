@@ -19,32 +19,6 @@ __maintainer__ = 'Helmuth Breitenfellner'
 __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
-# Alternative colormap
-COLORMAP2 = plt.cm.hsv(np.linspace(0, 1, 21)).tolist()
-
-# Colormap for visualizations
-COLORMAP = [
-    [128, 64, 128],
-    [244, 35, 232],
-    [70, 70, 70],
-    [102, 102, 156],
-    [190, 153, 153],
-    [153, 153, 153],
-    [250, 170, 30],
-    [220, 220, 0],
-    [107, 142, 35],
-    [152, 251, 152],
-    [70, 130, 180],
-    [220, 20, 60],
-    [255, 0, 0],
-    [0, 0, 142],
-    [0, 0, 70],
-    [0, 60, 100],
-    [0, 80, 100],
-    [0, 0, 230],
-    [119, 11, 32]
-]
-
 
 def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
                           file_prefix: str):
@@ -70,6 +44,7 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
     img_width = img.shape[1]
     img_height = img.shape[0]
     n_classes = pred.shape[2]
+    colormap = plt.cm.hsv(np.linspace(0, 1, n_classes)).tolist()
     # resize ground truth
     if gt.shape[1] != img_width or gt.shape[0] != img_height:
         gt = cv2.resize(
@@ -95,8 +70,8 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
     gt_img = np.zeros(img.shape, dtype="uint8")
     pred_img = np.zeros(img.shape, dtype="uint8")
     for i in range(n_classes):
-        gt_img[np.where((gt == i).all(axis=2))] = COLORMAP[i]
-        pred_img[np.where((pred == i).all(axis=2))] = COLORMAP[i]
+        gt_img[np.where((gt == i).all(axis=2))] = colormap[i]
+        pred_img[np.where((pred == i).all(axis=2))] = colormap[i]
     # save annotations
     cv2.imwrite(file_prefix + "-delta.png", delta)
     cv2.imwrite(file_prefix + "-gt.png", gt_img)
@@ -120,6 +95,7 @@ def annotate_boxes(img: np.ndarray,
     # get image width / height
     img_width = img.shape[1]
     img_height = img.shape[0]
+    colormap = plt.cm.hsv(np.linspace(0, 1, len(classes))).tolist()
     # blow up bounding boxes
     boxes_xy = b_xy.copy()
     boxes_xy[:, 0] *= img_width
@@ -132,7 +108,7 @@ def annotate_boxes(img: np.ndarray,
     ax = plt.gca()
     for i, box_xy in enumerate(boxes_xy):
         cl = b_cl[i]
-        color = [x/256 for x in COLORMAP[cl]]
+        color = [x/256 for x in colormap[cl]]
         if cl >= 0 and cl < len(classes):
             label = classes[cl]
         else:

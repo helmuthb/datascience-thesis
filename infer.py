@@ -123,7 +123,7 @@ def main():
 
     # build model (we only need the default boxes)
     models = ssd_deeplab_model(n_det, n_seg, config)
-    _, default_boxes_cw, _, _, _ = models
+    _, _, _, _, default_boxes_cw, prep = models
 
     # Bounding box utility object
     if use_numpy:
@@ -148,11 +148,11 @@ def main():
     # Preprocess data
     if use_numpy:
         val_ds_preprocessed = val_ds.map(
-            preprocess_np((model_width, model_width), bbox_util, n_seg)
+            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg)
         )
     else:
         val_ds_preprocessed = val_ds.map(
-            preprocess_tf((model_width, model_width), bbox_util, n_seg)
+            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg)
         )
 
     # Create batches

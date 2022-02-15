@@ -2,7 +2,10 @@ from typing import Callable
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Optimizer
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import (
+    MobileNetV2, preprocess_input as mnet2_prep)
+from tensorflow.keras.applications.vgg16 import (
+    VGG16, preprocess_input as vgg16_prep)
 
 from lib.ssdlite import (
     detection_heads, get_default_boxes_cw, ssdlite_base_outputs)
@@ -16,34 +19,28 @@ def ssd_deeplab_model(n_det: int, n_seg: int, config: dict) -> tuple:
     input_layer = tf.keras.layers.Input(shape=(width, width, 3))
     # base model
     if config['base'] == "MobileNetV2":
-        base = MobileNetV2(
-            input_tensor=input_layer,
-            include_top=False)
+        base = MobileNetV2(input_tensor=input_layer, include_top=False)
+        prep = mnet2_prep
+    elif config['base'] == "VGG16":
+        base = VGG16(input_tensor=input_layer, include_top=False)
+        prep = vgg16_prep
     else:
         raise ValueError(f"Base model '{config['base']}' unknown")
     # add deeplab layers
-    deeplab_output = add_deeplab_features(base, n_seg)
+    deeplab_output = add_deeplab_features(base, n_seg, config)
     # add SSDlite layers
     ssd_outputs_raw = ssdlite_base_outputs(base, config)
     # add class and location predictions
     ssd_outputs = detection_heads(n_det, ssd_outputs_raw, config)
     # create models
-    ssd_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=ssd_outputs
-    )
-    deeplab_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=deeplab_output
-    )
+    s_model = tf.keras.Model(inputs=input_layer, outputs=ssd_outputs)
+    d_model = tf.keras.Model(inputs=input_layer, outputs=deeplab_output)
     combined_outputs = (*ssd_outputs, deeplab_output)
-    combined_model = tf.keras.Model(
-        inputs=input_layer,
-        outputs=combined_outputs)
+    c_model = tf.keras.Model(inputs=input_layer, outputs=combined_outputs)
     # calculate default boxes
-    default_boxes_cw = get_default_boxes_cw(ssd_outputs_raw, config)
+    d_boxes_cw = get_default_boxes_cw(ssd_outputs_raw, config)
     # return combined model and the defaults
-    return combined_model, default_boxes_cw, base, deeplab_model, ssd_model
+    return c_model, base, d_model, s_model, d_boxes_cw, prep
 
 
 def loss_list(ssd_f: Callable, deeplab_f: Callable,

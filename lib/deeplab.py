@@ -6,6 +6,7 @@ This package defines the DeepLabV3+ segmentation model.
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Conv2D, Softmax
+import tensorflow as tf
 
 from .layers import ImageResize, aspp, decoder
 
@@ -21,23 +22,15 @@ __status__ = 'Experimental'
 
 
 def add_deeplab_features(
-        base: Model, num_classes: int, output_stride: int = 8) -> Model:
+        base: Model, num_classes: int, config: dict) -> tf.Tensor:
     """Add separate layers on top of MobileNet for DeepLab.
     """
     inputs = base.input
-    outputs = base.output
-    names = {layer.name for layer in base.layers}
+    output = base.get_layer(name=config['out_layer']).output
     # Add ASPP blocks
-    x = aspp(outputs, name="aspp", output_stride=output_stride)
+    x = aspp(output, name="aspp", output_stride=config['output_stride'])
     # fetch skip feature
-    if "bottleneck_2_project_bn" in names:
-        # In case of locally created model
-        skip = base.get_layer(name="bottleneck_2_project_bn").output
-    elif "block_1_project_BN" in names:
-        # In case of Keras provided model
-        skip = base.get_layer(name="block_1_project_BN").output
-    else:
-        raise ValueError("Base model is unknown")
+    skip = base.get_layer(name=config['skip_feature']).output
     # Add decoder block
     x = decoder(x, skip, name="decoder")
     # final prediction block
@@ -52,4 +45,3 @@ def add_deeplab_features(
     x = Softmax(name="deeplab_output")(x)
     # return outputs
     return x
-    # return Model(inputs=inputs, outputs=x, name="deeplab")

@@ -237,7 +237,7 @@ def main():
 
     # build model
     models = ssd_deeplab_model(n_det, n_seg, config)
-    model, default_boxes_cw, base, deeplab, ssd = models
+    model, base, deeplab, ssd, default_boxes_cw, prep = models
 
     if plot_dir:
         if not os.path.exists(plot_dir):
@@ -318,14 +318,14 @@ def main():
     # Preprocess data
     if use_numpy:
         train_ds = train_ds.map(
-            preprocess_np((model_width, model_width), bbox_util, n_seg))
+            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg))
         val_ds = val_ds.map(
-            preprocess_np((model_width, model_width), bbox_util, n_seg))
+            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg))
     else:
         train_ds = train_ds.map(
-            preprocess_tf((model_width, model_width), bbox_util, n_seg))
+            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg))
         val_ds = val_ds.map(
-            preprocess_tf((model_width, model_width), bbox_util, n_seg))
+            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg))
 
     # Shuffle & create batches
     train_ds_batch = train_ds.shuffle(100).batch(batch_size=batch_size)

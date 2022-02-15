@@ -5,7 +5,7 @@ Preprocessing of images for SSD.
 """
 
 import tensorflow as tf
-from typing import Tuple, List
+from typing import Callable, Tuple, List
 
 from .np_bbox_utils import BBoxUtils as BBoxUtilsNp
 from .tf_bbox_utils import BBoxUtils as BBoxUtilsTf
@@ -111,7 +111,8 @@ def subset_seg_classes(classes: List[str], subset: List[str]):
     return _subset_wrap
 
 
-def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
+def preprocess_np(prep: Callable, size: Tuple[int],
+                  bbox_utils: BBoxUtilsNp, n_seg: int):
     """Preprocess image: resize, scale, filter small boxes, drop name.
 
     Args:
@@ -125,8 +126,8 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
     def _preprocess_ssd_np(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # to numpy for classes and boxes
         boxes_cl = boxes_cl.numpy()
         boxes_xy = boxes_xy.numpy()
@@ -141,8 +142,8 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
     def _preprocess_deeplab(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -156,8 +157,8 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
     def _preprocess_both_np(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [0, 1] range
-        image = tf.clip_by_value(image / 255, 0., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # to numpy for classes and boxes
         boxes_cl = boxes_cl.numpy()
         boxes_xy = boxes_xy.numpy()
@@ -203,7 +204,8 @@ def preprocess_np(size: Tuple[int], bbox_utils: BBoxUtilsNp, n_seg: int):
         return _preprocess_both
 
 
-def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
+def preprocess_tf(prep: Callable, size: Tuple[int],
+                  bbox_utils: BBoxUtilsTf, n_seg: int):
     """Preprocess image: resize, scale, filter small boxes, drop name.
 
     Args:
@@ -218,8 +220,8 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
         from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [-1, 1] range
-        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # map defaults to boxes
         gt_clss, gt_locs = compute_target(
             bbox_utils.default_boxes_cw,
@@ -233,8 +235,8 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
     def _preprocess_seg(image, boxes_cl, boxes_xy, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [-1, 1] range
-        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -249,8 +251,8 @@ def preprocess_tf(size: Tuple[int], bbox_utils: BBoxUtilsTf, n_seg: int):
         from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
-        # scale image color values to [-1, 1] range
-        image = tf.clip_by_value((image - 127) / 127, -1., 1.)
+        # first step of pre-processing
+        image = prep(image)
         # map defaults to boxes
         # gt_clss, gt_locs = bbox_utils.map_defaults_xy(boxes_cl, boxes_xy)
         gt_clss, gt_locs = compute_target(

@@ -123,13 +123,13 @@ def main():
     parser.add_argument(
         '--det-num-classes',
         type=int,
-        default=11,
+        default=0,
         help='Number of classes for object detection (0 = segmentation only).'
     )
     parser.add_argument(
         '--seg-num-classes',
         type=int,
-        default=19,
+        default=0,
         help='Number of classes for segmentation (0 = object detection only).'
     )
     parser.add_argument(

@@ -5,7 +5,6 @@ import timeit
 import yaml
 
 import tensorflow as tf
-import cv2
 from tensorflow.keras.utils import plot_model
 from tqdm import tqdm
 
@@ -66,18 +65,6 @@ def main():
         help='Specify configuration yaml file for model.',
         required=True
     )
-    parser.add_argument(
-        '--image-width',
-        type=int,
-        default=1920,
-        help='Specify original image width'
-    )
-    parser.add_argument(
-        '--image-height',
-        type=int,
-        default=1080,
-        help='Specify original image height'
-    )
     args = parser.parse_args()
     tfrecdir = args.tfrecords
     outdir = args.out_samples
@@ -86,8 +73,6 @@ def main():
     seg_classes = args.seg_classes
     use_numpy = args.use_numpy
     model_config = args.model_config
-    image_width = args.image_width
-    image_height = args.image_height
     # create output directories if missing
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
     os.makedirs(f"{outdir}/pred-annotated", exist_ok=True)
@@ -186,18 +171,8 @@ def main():
         if n_det > 0:
             p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
             det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
-            g_xy = g_xy.copy()
-            g_xy[:, 0] *= image_width
-            g_xy[:, 1] *= image_height
-            g_xy[:, 2] *= image_width
-            g_xy[:, 3] *= image_height
-            img2 = img.copy()
-            for box_xy in g_xy:
-                top_left = (int(round(box_xy[0])), int(round(box_xy[1])))
-                bot_right = (int(round(box_xy[2])), int(round(box_xy[3])))
-                color = (0, 255, 0)
-                cv2.rectangle(img2, top_left, bot_right, color, 2)
-            cv2.imwrite(f"{outdir}/orig-annotated/{name}.jpg", img2)
+            file_name = f"{outdir}/orig-annotated/{name}.jpg"
+            annotate_boxes(img, g_cl, None, g_xy, det_names, file_name)
             file_name = f"{outdir}/pred-annotated/{name}.jpg"
             annotate_boxes(img, p_cl, p_sc, p_xy, det_names, file_name)
             # create output file for evaluation

@@ -3,6 +3,7 @@
 """Tools for visualiztion of inference and original images.
 """
 
+import math
 import numpy as np
 import cv2
 from matplotlib import pyplot as plt
@@ -18,6 +19,15 @@ __version__ = '0.1.0'
 __maintainer__ = 'Helmuth Breitenfellner'
 __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
+
+
+def get_colormap(n_items, as_int):
+    cm = plt.cm.get_cmap('tab20')
+    loops = math.ceil(n_items / len(cm.colors))
+    colors = cm.colors * loops
+    if as_int:
+        colors = [(256*r, 256*g, 256*b) for (r, g, b) in colors]
+    return colors
 
 
 def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
@@ -44,7 +54,7 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
     img_width = img.shape[1]
     img_height = img.shape[0]
     n_classes = pred.shape[2]
-    colormap = plt.cm.hsv(np.linspace(0, 1, n_classes)).tolist()
+    colormap = get_colormap(n_classes, as_int=True)
     # resize ground truth
     if gt.shape[1] != img_width or gt.shape[0] != img_height:
         gt = cv2.resize(
@@ -95,7 +105,8 @@ def annotate_boxes(img: np.ndarray,
     # get image width / height
     img_width = img.shape[1]
     img_height = img.shape[0]
-    colormap = plt.cm.hsv(np.linspace(0, 1, len(classes))).tolist()
+    # colormap = plt.cm.hsv(np.linspace(0, 1, len(classes))).tolist()
+    colormap = get_colormap(len(classes), as_int=True)
     # blow up bounding boxes
     boxes_xy = b_xy.copy()
     boxes_xy[:, 0] *= img_width

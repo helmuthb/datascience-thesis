@@ -98,7 +98,7 @@ def separable_conv2d(inputs, name, num_filters, strides, dilation_rate=1):
             )
 
 
-def bottleneck2(
+def bottleneck(
         inputs, name, num_filters, strides, expand_ratio):
     """Inverted ResNet block.
     Compared to the original ResNet block - which first squeezed and
@@ -145,14 +145,7 @@ def bottleneck2(
         added = Add(name=f"{name}_added")([project_conv, inputs])
     else:
         added = project_conv
-    return added, expand
-
-
-def bottleneck(**kwargs):
-    """Version of bottleneck which does not output the expand layer.
-    """
-    out, _ = bottleneck2(**kwargs)
-    return out
+    return added
 
 
 class AdaptiveAvgPool2D(Layer):

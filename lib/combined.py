@@ -7,8 +7,8 @@ from tensorflow.keras.applications.mobilenet_v2 import (
 from tensorflow.keras.applications.vgg16 import (
     VGG16, preprocess_input as vgg16_prep)
 
-from lib.ssdlite import (
-    detection_heads, get_default_boxes_cw, ssdlite_base_outputs)
+from lib.ssd import (
+    detection_heads, get_default_boxes_cw, ssd_base_outputs)
 from lib.deeplab import add_deeplab_features
 
 
@@ -26,10 +26,15 @@ def ssd_deeplab_model(n_det: int, n_seg: int, config: dict) -> tuple:
         prep = vgg16_prep
     else:
         raise ValueError(f"Base model '{config['base']}' unknown")
+    # provide values for n_det / n_seg to create working models
+    if n_det == 0:
+        n_det = n_seg
+    elif n_seg == 0:
+        n_seg = n_det
     # add deeplab layers
     deeplab_output = add_deeplab_features(base, n_seg, config)
     # add SSDlite layers
-    ssd_outputs_raw = ssdlite_base_outputs(base, config)
+    ssd_outputs_raw = ssd_base_outputs(base, config)
     # add class and location predictions
     ssd_outputs = detection_heads(n_det, ssd_outputs_raw, config)
     # create models
@@ -73,7 +78,7 @@ def get_training_step(model: Model, losses: Callable, weights: list,
     @tf.function
     def _step1(img, gt):
         with tf.GradientTape() as tape:
-            pr = model(img)
+            pr = model(img, training=True)
             ll = losses(gt, pr)
             loss = w[0] * ll[0]
             # weight decay
@@ -87,7 +92,7 @@ def get_training_step(model: Model, losses: Callable, weights: list,
     @tf.function
     def _step2(img, gt):
         with tf.GradientTape() as tape:
-            pr = model(img)
+            pr = model(img, training=True)
             ll = losses(gt, pr)
             loss = w[0] * ll[0] + w[1] * ll[1]
             # weight decay
@@ -101,7 +106,7 @@ def get_training_step(model: Model, losses: Callable, weights: list,
     @tf.function
     def _step3(img, gt):
         with tf.GradientTape() as tape:
-            pr = model(img)
+            pr = model(img, training=True)
             ll = losses(gt, pr)
             loss = w[0] * ll[0] + w[1] * ll[1] + w[2] * ll[2]
             # weight decay

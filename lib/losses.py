@@ -25,10 +25,11 @@ __status__ = 'Experimental'
 class SSDLosses():
     """SSD Loss components.
     """
-    def __init__(self, neg_ratio, use_focal=True, epsilon=1e-7,
-                 gamma=2., alpha=1.):
+    def __init__(self, neg_ratio, focal_weight=0.5, box_weight=0.5,
+                 epsilon=1e-7, gamma=2., alpha=1.):
         self.neg_ratio = tf.constant(neg_ratio)
-        self.use_focal = use_focal
+        self.focal_weight = tf.constant(focal_weight)
+        self.box_weight = tf.constant(box_weight)
         self.epsilon = tf.constant(epsilon)
         self.gamma = tf.constant(gamma)
         self.alpha = tf.constant(alpha)
@@ -94,24 +95,30 @@ class SSDLosses():
         gt_cl2 = tf.minimum(gt_cl, tf.zeros_like(gt_cl))
         # positive indexes: where we have an object in the gt
         pos_idx = gt_cl > 0
-        if self.use_focal:
-            conf_loss = self.focal_loss(gt_cl, gt_cl2, pr_conf)
-            num_pos = tf.reduce_sum(tf.dtypes.cast(pos_idx, tf.float32))
-        else:
-            # number of positive indexes per image
-            num_pos_img = tf.reduce_sum(tf.cast(pos_idx, tf.int32), axis=1)
-            neg_idx = self._neg_mining(gt_cl, gt_cl2, pr_conf, num_pos_img)
-            conf_idx = tf.math.logical_or(pos_idx, neg_idx)
-            # classification loss
-            cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(
-                from_logits=True,
-                reduction='sum'
-            )
-            conf_loss = cross_entropy(gt_cl2[conf_idx], pr_conf[conf_idx])
-            num_pos = tf.reduce_sum(num_pos_img)
+
+        # focal loss
+        conf_loss_focal = self.focal_loss(gt_cl, gt_cl2, pr_conf)
+
+        # box_loss
+        # number of positive indexes per image
+        num_pos_img = tf.reduce_sum(tf.cast(pos_idx, tf.int32), axis=1)
+        neg_idx = self._neg_mining(gt_cl, gt_cl2, pr_conf, num_pos_img)
+        conf_idx = tf.math.logical_or(pos_idx, neg_idx)
+        # classification loss
+        cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(
+            from_logits=True,
+            reduction='sum'
+        )
+        conf_loss_box = cross_entropy(gt_cl2[conf_idx], pr_conf[conf_idx])
+
+        conf_loss = (self.box_weight * conf_loss_box +
+                     self.focal_weight * conf_loss_focal)
+        num_pos = tf.cast(tf.reduce_sum(num_pos_img), dtype=tf.float32)
+
         # localization loss
         smooth_l1_loss = tf.keras.losses.Huber(reduction='sum')
         locs_loss = smooth_l1_loss(gt_locs[pos_idx], pr_locs[pos_idx])
+
         # return losses adjusted by num_pos
         return conf_loss/num_pos, locs_loss/num_pos
 

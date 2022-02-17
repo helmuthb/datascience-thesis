@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-This package defines the SSD-Lite model.
+This package defines the SSD model.
 """
 
 from math import sqrt
@@ -12,10 +12,10 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.keras.models import Model
 
-from .layers import bottleneck, depthwise_bn_relu6
+from .layers import ssd_extra, bottleneck, depthwise_bn_relu6
 
 __author__ = 'Helmuth Breitenfellner'
-__copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
+__copyright__ = 'Copyright 2022, Christian Doppler Laboratory for ' \
                 'Embedded Machine Learning'
 __credits__ = ['']
 __license__ = 'TBD'
@@ -25,14 +25,13 @@ __email__ = 'helmuth.breitenfellner@student.tuwien.ac.at'
 __status__ = 'Experimental'
 
 
-def ssdlite_base_outputs(model: Model, config: dict) -> tuple:
-    """From an extended MobileNetV2 model, get the base layers used for SSDlite.
-    The following layers are used by SSDlite:
+def ssd_base_outputs(model: Model, config: dict) -> tuple:
+    """From an extended MobileNetV2 model, get the base layers used for SSD.
+    The following layers are used by SSD:
     * The layer following the first five bottleneck blocks,
-      after performing the next expansion (called bottleneck_14.expand)
-    * The final layer (called conv_pw1)
+      after performing the next expansion (called block_13_expand_relu)
+    * The final layer (called out_relu)
     * Four additional bottleneck layers (called feat1 till feat4)
-    * Four additional layers which are Bottleneck layers
     Args:
         model (Model): Base model.
     Returns:
@@ -47,7 +46,11 @@ def ssdlite_base_outputs(model: Model, config: dict) -> tuple:
     output = model.get_layer(name=config['out_layer']).output
     # layer = model.output
     for ssd_layer in config['ssd_layers']:
-        output = bottleneck(inputs=output, **ssd_layer)
+        if config['detector'] == 'ssd':
+            output = ssd_extra(inputs=output, **ssd_layer)
+            # output = bottleneck(inputs=output, **ssd_layer)
+        else:
+            output = bottleneck(inputs=output, **ssd_layer)
         outputs.append(output)
     # return model & layers
     return outputs
@@ -67,9 +70,34 @@ def get_num_default_ratios(config: dict) -> List[int]:
     return [2*len(a)+2 for a in config['aspect_ratios']]
 
 
-def head_output(prefix: str, index: int, n_out: int, n_boxes: int,
-                inp: tf.Tensor) -> tf.Tensor:
-    """Head layer creating the boxes / class scores.
+def head_output_ssd(prefix: str, index: int, n_out: int, n_boxes: int,
+                    inp: tf.Tensor) -> tf.Tensor:
+    """Head layer creating the boxes / class scores as used in SSD.
+    Args:
+        prefix (str): Prefix ("classes" or "boxes").
+        index (int): Number of layer.
+        n_out (int): Either 4 (for boxes) or number of classes.
+        n_boxes (int): Number of default boxes to output.
+        inp (tf.keras.KerasTensor): Layer input.
+    Returns:
+        output (tf.keras.layers.Layer): Output of size [N, n_boxes, n_out].
+    """
+    conv_2d = tf.keras.layers.Conv2D(
+        filters=n_out * n_boxes,
+        kernel_size=3,
+        padding='same',
+        name=f"{prefix}_conv{index}"
+    )(inp)
+    reshape = tf.keras.layers.Reshape(
+        [-1, n_out],
+        name=f"{prefix}_reshape{index}"
+    )(conv_2d)
+    return reshape
+
+
+def head_output_ssdlite(prefix: str, index: int, n_out: int, n_boxes: int,
+                        inp: tf.Tensor) -> tf.Tensor:
+    """Head layer creating the boxes / class scores as used in SSDlite.
     Args:
         prefix (str): Prefix ("classes" or "boxes").
         index (int): Number of layer.
@@ -89,15 +117,10 @@ def head_output(prefix: str, index: int, n_out: int, n_boxes: int,
         kernel_size=1,
         name=f"{prefix}_conv{index}"
     )(dw_relu)
-    bn = tf.keras.layers.BatchNormalization(
-        epsilon=1e-3,
-        momentum=0.999,
-        name=f"{prefix}_bn{index}"
-    )(conv_2d)
     reshape = tf.keras.layers.Reshape(
         [-1, n_out],
         name=f"{prefix}_reshape{index}"
-    )(bn)
+    )(conv_2d)
     return reshape
 
 
@@ -117,7 +140,10 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     # Outputs for class predictions
     out_classes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
-        out = head_output("classes", i, n_classes, n_a, layer)
+        if config['detector'] == 'ssd':
+            out = head_output_ssd("classes", i, n_classes, n_a, layer)
+        else:
+            out = head_output_ssdlite("classes", i, n_classes, n_a, layer)
         out_classes.append(out)
     # concatenate
     classes = tf.keras.layers.Concatenate(axis=1, name='ssd_conf_output')(
@@ -126,7 +152,10 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     # Outputs for bounding boxes
     out_boxes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
-        out = head_output("boxes", i, 4, n_a, layer)
+        if config['detector'] == 'ssd':
+            out = head_output_ssd("boxes", i, 4, n_a, layer)
+        else:
+            out = head_output_ssdlite("boxes", i, 4, n_a, layer)
         out_boxes.append(out)
     # concatenate
     boxes = tf.keras.layers.Concatenate(axis=1, name='ssd_bbox_output')(

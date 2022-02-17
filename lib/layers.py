@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Additional layers as needed for SSD-Lite and MobileNetV2.
+Additional layers as needed for SSD, SSDlite, and Deeplabv3p.
 """
 
 import tensorflow as tf
@@ -52,6 +52,7 @@ def conv_bn_relu6(
     bn = BatchNormalization(
             epsilon=1e-3,
             momentum=0.999,
+            renorm=True,
             beta_initializer='glorot_uniform',
             gamma_initializer='glorot_uniform',
             name=f"{name}_bn"
@@ -73,6 +74,7 @@ def depthwise_bn_relu6(inputs, name, strides, dilation_rate=1, padding='same'):
     bn = BatchNormalization(
             epsilon=1e-3,
             momentum=0.999,
+            renorm=True,
             beta_initializer='glorot_uniform',
             gamma_initializer='glorot_uniform',
             name=f"{name}_bn")(conv)
@@ -96,6 +98,37 @@ def separable_conv2d(inputs, name, num_filters, strides, dilation_rate=1):
             kernel_size=(1, 1),
             strides=1
             )
+
+
+def ssd_extra(inputs, name, num_filters, strides, expand_ratio):
+    """Extra blocks as used by SSD.
+    """
+    num_filters = _round8(num_filters)
+    input_shape = inputs.shape[1:]
+    in_channels = input_shape[2]
+    hidden_dim = in_channels * expand_ratio
+    expand = conv_bn_relu6(
+        inputs=inputs,
+        name=f"{name}_conv_pw",
+        num_filters=hidden_dim,
+        kernel_size=(1, 1),
+        strides=1
+    )
+    expand_size = K.int_shape(expand)[1:3]
+    if expand_size[0] is None:
+        adjust = (1, 1)
+    else:
+        adjust = (1 - expand_size[0] % 2, 1 - expand_size[1] % 2)
+    padding = ((1 - adjust[0], 1), (1 - adjust[1], 1))
+    zeropad = ZeroPadding2D(padding=padding, name=f"{name}_pad")(expand)
+    conv = conv_bn_relu6(
+        inputs=zeropad,
+        name=f"{name}_conv2",
+        num_filters=num_filters,
+        kernel_size=(3, 3),
+        strides=strides
+    )
+    return conv
 
 
 def bottleneck(

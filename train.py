@@ -188,7 +188,7 @@ def main():
     parser.add_argument(
         '--stop-after',
         type=int,
-        default=5,
+        default=50,
         help='Stop after N epochs without improvement.'
     )
     args = parser.parse_args()
@@ -413,13 +413,21 @@ def main():
                 train_locs_loss += ll[2].numpy()
                 train_segs_loss += ll[3].numpy()
             train_loss += sum([li*wi for li, wi in zip(ll[1:], loss_weights)])
+            train_loss = train_loss.numpy()
+            # break in case of NaN
+            if train_loss != train_loss:
+                break
             train_num += 1
+        # break in case of NaN
+        if train_loss != train_loss:
+            print("NaN detected - ending training")
+            break
         train_time = time.time() - start_time
         train_conf_loss /= train_num
         train_locs_loss /= train_num
         train_segs_loss /= train_num
         train_loss /= train_num
-        out = [epoch+1, lr, train_time, train_loss.numpy()]
+        out = [epoch+1, lr, train_time, train_loss]
         if n_det > 0:
             out += [train_conf_loss, train_locs_loss]
         if n_seg > 0:
@@ -435,7 +443,7 @@ def main():
         start_time = time.time()
         for batch in val_ds_batch:
             img, gt = batch
-            pr = model(img)
+            pr = model(img, training=False)
             ll = losses(gt, pr)
             if n_seg == 0:
                 val_conf_loss += ll[0].numpy()
@@ -447,13 +455,14 @@ def main():
                 val_locs_loss += ll[1].numpy()
                 val_segs_loss += ll[2].numpy()
             val_loss += sum([li*wi for li, wi in zip(ll, loss_weights)])
+            val_loss = val_loss.numpy()
             val_num += 1
         val_time = time.time() - start_time
         val_conf_loss /= val_num
         val_locs_loss /= val_num
         val_segs_loss /= val_num
         val_loss /= val_num
-        out += [val_time, val_loss.numpy()]
+        out += [val_time, val_loss]
         if n_det > 0:
             out += [val_conf_loss, val_locs_loss]
         if n_seg > 0:

@@ -221,7 +221,8 @@ def preprocess_tf(prep: Callable, size: Tuple[int],
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
-        image = prep(image)
+        if prep is not None:
+            image = prep(image)
         # map defaults to boxes
         gt_clss, gt_locs = compute_target(
             bbox_utils.default_boxes_cw,

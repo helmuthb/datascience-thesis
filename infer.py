@@ -2,7 +2,6 @@ from inspect import getsourcefile
 import os
 import argparse
 import timeit
-import yaml
 
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
@@ -16,6 +15,7 @@ from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation
+from lib.config import Config
 
 
 def main():
@@ -100,11 +100,10 @@ def main():
         # current script folder ...
         folder = os.path.dirname(getsourcefile(main))
         model_config = f"{folder}/config/{model_config}.cfg"
-    with open(model_config, 'r') as cf:
-        config = yaml.safe_load(cf)
+    config = Config.load_file(model_config)
 
     # load model width from config
-    model_width = config['width']
+    model_width = config.width
 
     # build model (we only need the default boxes)
     models = ssd_deeplab_model(n_det, n_seg, config)
@@ -185,7 +184,7 @@ def main():
                     b_str = " ".join([str(b) for b in cw])
                     b2_str = " ".join([str(b) for b in xy])
                     f.write(f"{cl} {sc} {b_str}\n")
-                    f.write(f"# XY: {cl} {sc} {b2_str}\n")
+                    f.write(f"# xy: {cl} {sc} {b2_str}\n")
         if n_seg > 0:
             # evaluation of segmentation
             seg_eval.evaluate_sample(g_sg, p_segs)

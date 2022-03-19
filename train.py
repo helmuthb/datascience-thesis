@@ -5,7 +5,6 @@ import os
 import time
 import argparse
 from numpy import infty
-import yaml
 
 import tensorflow as tf
 from tensorflow.keras.utils import plot_model
@@ -21,6 +20,7 @@ from lib.preprocess import (
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
+from lib.config import Config
 
 
 def print_model(model, name, out_folder):
@@ -230,11 +230,10 @@ def main():
         # current script folder ...
         folder = os.path.dirname(getsourcefile(main))
         model_config = f"{folder}/config/{model_config}.cfg"
-    with open(model_config, 'r') as cf:
-        config = yaml.safe_load(cf)
+    config = Config.load_file(model_config)
 
     # load model width from config
-    model_width = config['width']
+    model_width = config.width
 
     # build model
     models = ssd_deeplab_model(n_det, n_seg, config)

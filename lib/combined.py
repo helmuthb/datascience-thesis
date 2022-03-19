@@ -1,7 +1,10 @@
 from typing import Callable
+
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Optimizer
+from tensorflow.keras.applications import (
+    MobileNetV3Small, MobileNetV3Large)
 from tensorflow.keras.applications.mobilenet_v2 import (
     MobileNetV2, preprocess_input as mnet2_prep)
 from tensorflow.keras.applications.vgg16 import (
@@ -10,22 +13,29 @@ from tensorflow.keras.applications.vgg16 import (
 from lib.ssd import (
     detection_heads, get_default_boxes_cw, ssd_base_outputs)
 from lib.deeplab import add_deeplab_features
+from lib.config import Config
 
 
-def ssd_deeplab_model(n_det: int, n_seg: int, config: dict) -> tuple:
+def ssd_deeplab_model(n_det: int, n_seg: int, config: Config) -> tuple:
     """
     """
-    width = config['width']
+    width = config.width
     input_layer = tf.keras.layers.Input(shape=(width, width, 3))
     # base model
-    if config['base'] == "MobileNetV2":
+    if config.base == "MobileNetV2":
         base = MobileNetV2(input_tensor=input_layer, include_top=False)
         prep = mnet2_prep
-    elif config['base'] == "VGG16":
+    elif config.base == "VGG16":
         base = VGG16(input_tensor=input_layer, include_top=False)
         prep = vgg16_prep
+    elif config.base == "MobileNetV3Small":
+        base = MobileNetV3Small(input_tensor=input_layer, include_top=False)
+        prep = None
+    elif config.base == "MobileNetV3Large":
+        base = MobileNetV3Large(input_tensor=input_layer, include_top=False)
+        prep = None
     else:
-        raise ValueError(f"Base model '{config['base']}' unknown")
+        raise ValueError(f"Base model '{config.base}' unknown")
     # provide values for n_det / n_seg to create working models
     if n_det == 0:
         n_det = n_seg

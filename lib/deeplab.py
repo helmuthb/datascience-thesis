@@ -26,11 +26,11 @@ def add_deeplab_features(
     """Add separate layers on top of MobileNet for DeepLab.
     """
     inputs = base.input
-    output = base.get_layer(name=config['out_layer']).output
+    output = base.get_layer(name=config.out_layer).output
     # Add ASPP blocks
-    x = aspp(output, name="aspp", output_stride=config['output_stride'])
+    x = aspp(output, name="aspp", output_stride=config.output_stride)
     # fetch skip feature
-    skip = base.get_layer(name=config['skip_feature']).output
+    skip = base.get_layer(name=config.skip_feature).output
     # Add decoder block
     x = decoder(x, skip, name="decoder")
     # final prediction block

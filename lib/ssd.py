@@ -39,14 +39,14 @@ def ssd_base_outputs(model: Model, config: dict) -> tuple:
     """
     outputs = []
     # get existing layers of interest
-    for layer_name in config['feature_layers']:
+    for layer_name in config.feature_layers:
         output = model.get_layer(name=layer_name).output
         outputs.append(output)
     # add additional layers of interest
-    output = model.get_layer(name=config['out_layer']).output
+    output = model.get_layer(name=config.out_layer).output
     # layer = model.output
-    for ssd_layer in config['ssd_layers']:
-        if config['detector'] == 'ssd':
+    for ssd_layer in config.ssd_layers:
+        if config.detector == 'ssd':
             output = ssd_extra(inputs=output, **ssd_layer)
             # output = bottleneck(inputs=output, **ssd_layer)
         else:
@@ -67,7 +67,7 @@ def get_num_default_ratios(config: dict) -> List[int]:
     Returns:
         num_default_ratios (list(int)): Number of default ratios per layer.
     """
-    return [2*len(a)+2 for a in config['aspect_ratios']]
+    return [2*len(a)+2 for a in config.aspect_ratios]
 
 
 def head_output_ssd(prefix: str, index: int, n_out: int, n_boxes: int,
@@ -140,7 +140,7 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     # Outputs for class predictions
     out_classes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
-        if config['detector'] == 'ssd':
+        if config.detector == 'ssd':
             out = head_output_ssd("classes", i, n_classes, n_a, layer)
         else:
             out = head_output_ssdlite("classes", i, n_classes, n_a, layer)
@@ -152,7 +152,7 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     # Outputs for bounding boxes
     out_boxes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
-        if config['detector'] == 'ssd':
+        if config.detector == 'ssd':
             out = head_output_ssd("boxes", i, 4, n_a, layer)
         else:
             out = head_output_ssdlite("boxes", i, 4, n_a, layer)
@@ -169,24 +169,25 @@ def get_default_boxes_cw(outputs: tuple, config: dict) -> tf.Tensor:
     """Get the default bounding boxes for the given layers.
     """
     boxes = []
-    for i in range(len(config['obj_scales'])):
-        scale = config['obj_scales'][i]
+    for i in range(len(config.obj_scales)):
+        scale = config.obj_scales[i]
         # width, height of the layer
-        width, height = outputs[i].shape[1:3]
+        height, width = outputs[i].shape[1:3]
         for xi, yi in product(range(width), range(height)):
+            # for yi, xi in product(range(height), range(width)):
             # rounded from 0 to 1
             x = (xi + 0.5) / width
             # rounded from 0 to 1
             y = (yi + 0.5) / height
-            for ratio in config['aspect_ratios'][i]:
+            for ratio in config.aspect_ratios[i]:
                 sqrt_ratio = sqrt(ratio)
                 boxes.append([x, y, scale*sqrt_ratio, scale/sqrt_ratio])
                 boxes.append([x, y, scale/sqrt_ratio, scale*sqrt_ratio])
             # additional box: square
             boxes.append([x, y, scale, scale])
             # additional box: geom. mean between this and the next scale
-            if i+1 < len(config['obj_scales']):
-                next_scale = config['obj_scales'][i+1]
+            if i+1 < len(config.obj_scales):
+                next_scale = config.obj_scales[i+1]
                 additional_scale = sqrt(scale * next_scale)
             else:
                 additional_scale = 1.

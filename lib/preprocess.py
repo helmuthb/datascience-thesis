@@ -123,19 +123,12 @@ def preprocess_tf(prep: Callable, size: Tuple[int],
 """
 
     def _preprocess_det(image, boxes_cl, boxes_yx, mask, has_mask, name):
-        from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
         if prep is not None:
             image = prep(image)
-        # map defaults to boxes
-        gt_clss, gt_locs = compute_target(
-            bbox_utils.default_boxes_cw,
-            boxes_yx,
-            boxes_cl,
-            )
-        # gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
+        gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
         # return preprocessed image & data
         return image, (gt_clss, gt_locs)
 

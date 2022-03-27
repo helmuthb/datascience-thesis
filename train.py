@@ -99,9 +99,10 @@ def main():
         help='Number of samples per batch (default=8).'
     )
     parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Debugging: add more metrics for detailed analysis.'
+        '--optimizer',
+        type=str,
+        default="adam",
+        help='Optimizer to use ("adam", "sgd") - default "adam".'
     )
     parser.add_argument(
         '--freeze-base-epochs',
@@ -202,6 +203,7 @@ def main():
     det_weight = args.det_weight
     seg_weight = args.seg_weight
     batch_size = args.batch_size
+    optimizer_name = args.optimizer
     freeze_base_epochs = args.freeze_base_epochs
     freeze_det = args.freeze_det
     freeze_seg = args.freeze_seg
@@ -346,7 +348,13 @@ def main():
     else:
         lr = learning_rate
     # Optimizer
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lambda: lr)
+    if optimizer_name == "adam":
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lambda: lr)
+    elif optimizer_name == "sgd":
+        optimizer = tf.keras.optimizers.SGD(learning_rate=lambda: lr)
+    else:
+        raise ValueError(
+            f"Parameter `optimizer` has unknown value '{optimizer_name}'")
     # training step
     training_step = get_training_step(model, losses, loss_weights,
                                       optimizer, n_det, n_seg, l2_weight)

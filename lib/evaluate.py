@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
-from lib.np_bbox_utils import iou_xy
+from lib.tf_bbox_utils import iou_yx
 
 
 __author__ = 'Helmuth Breitenfellner'
@@ -232,17 +232,17 @@ class DetEval(object):
             ('class', 'i4'), ('score', 'f4')
         ])
 
-    def evaluate_sample(self, gt_cl: np.ndarray, gt_xy: np.ndarray,
+    def evaluate_sample(self, gt_cl: np.ndarray, gt_yx: np.ndarray,
                         pr_cl: np.ndarray, pr_sc: np.ndarray,
-                        pr_xy: np.ndarray):
+                        pr_yx: np.ndarray):
         """Add the statistics for another sample to the evaluator.
 
         Args:
             gt_cl (np.ndarray(n1)): Ground truth classes.
-            gt_xy (np.ndarray(n1, 4)): Ground truth boxes.
+            gt_yx (np.ndarray(n1, 4)): Ground truth boxes.
             pr_cl (np.ndarray(n2)): Predicted object classes.
             pr_sc (np.ndarray(n2)): Predicted object scores.
-            pr_xy (np.ndarray(n2, 4)): Predicted object boxes.
+            pr_yx (np.ndarray(n2, 4)): Predicted object boxes.
         """
         # reset the prepared numpy-arrays
         self.tp = None
@@ -253,7 +253,7 @@ class DetEval(object):
         # sort predictions by score (descending)
         idxs = np.argsort(-pr_sc)
         pr_sc = pr_sc[idxs]
-        pr_xy = pr_xy[idxs]
+        pr_yx = pr_yx[idxs]
         pr_cl = pr_cl[idxs]
         # loop through all relevant classes
         for c in gt_classes.union(pr_classes):
@@ -261,18 +261,18 @@ class DetEval(object):
             if c < 0 or c >= self.num_classes:
                 continue
             # relevant groundtruth boxes
-            gt_c_xy = gt_xy[gt_cl == c]
+            gt_c_yx = gt_yx[gt_cl == c]
             # add to number of groundtruth boxes
-            self.gt_count[c] += len(gt_c_xy)
+            self.gt_count[c] += len(gt_c_yx)
             # iterate through all predictions for this class
             pr_mask = (pr_cl == c)
-            pr_c_xy = pr_xy[pr_mask]
+            pr_c_yx = pr_yx[pr_mask]
             pr_c_sc = pr_sc[pr_mask]
-            if len(gt_c_xy) > 0:
+            if len(gt_c_yx) > 0:
                 # set of matched ground boxes so far
                 gt_matched = set()
                 # calculate intersections over union
-                iou = iou_xy(pr_c_xy, gt_c_xy, pairwise=False)
+                iou = iou_yx(pr_c_yx, gt_c_yx, pairwise=False)
                 for i, scr in enumerate(pr_c_sc):
                     # find ground truth with highest IoU
                     gt_idx = np.argmax(iou[i, :])

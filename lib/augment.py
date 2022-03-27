@@ -62,7 +62,7 @@ class Augment():
     def random_resized_crop(self, scale=(0.08, 1), ratio=(0.75, 1.33), p=0.5):
         self.transforms.append(RandomResizedCrop(scale, ratio, p))
 
-    def __call__(self, image, boxes_cl, boxes_xy, mask, name):
+    def __call__(self, image, boxes_cl, boxes_yx, mask, name):
         def _tuple_float(t):
             return [float(i) for i in t]
 
@@ -71,27 +71,27 @@ class Augment():
                 self.transforms,
                 bbox_params=BboxParams(format='albumentations'))
         t = self.t
-        boxes = [list(b) + [str(c)] for c, b in zip(boxes_cl, boxes_xy)]
+        boxes = [list(b) + [str(c)] for c, b in zip(boxes_cl, boxes_yx)]
         out = t(
             image=image,
             bboxes=boxes,
             mask=mask
         )
-        # print(boxes_xy)
+        # print(boxes_yx)
         bout_cl = [int(b[4]) for b in out['bboxes']]
-        bout_xy = np.array([b[:4] for b in out['bboxes']], np.single)
+        bout_yx = np.array([b[:4] for b in out['bboxes']], np.single)
         return (out['image'].astype(np.single),
-                bout_cl, bout_xy,
+                bout_cl, bout_yx,
                 out['mask'], name)
 
     def tf_wrap(self):
-        def _tf_wrap(image, boxes_cl, boxes_xy, mask, has_mask, name):
-            image, cl, xy, mask, name = tf.numpy_function(
+        def _tf_wrap(image, boxes_cl, boxes_yx, mask, has_mask, name):
+            image, cl, yx, mask, name = tf.numpy_function(
                 self,
-                (image, boxes_cl, boxes_xy, mask, name),
+                (image, boxes_cl, boxes_yx, mask, name),
                 (tf.float32, tf.int64, tf.float32, tf.uint8, tf.string)
             )
             image.set_shape([self.height, self.width, 3])
             mask.set_shape([self.height, self.width, 1])
-            return (image, cl, xy, mask, has_mask, name)
+            return (image, cl, yx, mask, has_mask, name)
         return _tf_wrap

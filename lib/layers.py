@@ -100,6 +100,28 @@ def separable_conv2d(inputs, name, num_filters, strides, dilation_rate=1):
             )
 
 
+def ssd_extra_simple(inputs, name, num_filters, kernel_size,
+                     strides=1, padding='valid'):
+    """Simplified extra SSD-block.
+    This is a pointwise 1x1 Conv2D, followed by a 3x3 Conv2D."""
+    num_filters = _round8(num_filters)
+    conv1 = Conv2D(
+        name=f'{name}_conv1x1',
+        filters=num_filters//2,
+        kernel_size=1,
+        activation='relu')
+    conv2 = Conv2D(
+        name=f'{name}_conv{kernel_size}x{kernel_size}',
+        filters=num_filters,
+        kernel_size=kernel_size,
+        strides=strides,
+        padding=padding,
+        activation='relu'
+    )
+    hidden = conv1(inputs)
+    return conv2(hidden)
+
+
 def ssd_extra(inputs, name, num_filters, strides, expand_ratio):
     """Extra blocks as used by SSD.
     """

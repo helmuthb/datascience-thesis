@@ -23,7 +23,7 @@ __status__ = 'Experimental'
 
 
 # metadata for a RailSem record bounding box
-BBox = namedtuple('BBox', ['cl', 'lb', 'x0', 'y0', 'x1', 'y1'])
+BBox = namedtuple('BBox', ['cl', 'lb', 'y0', 'x0', 'y1', 'x1'])
 
 # Description of tf.train.Example
 feature_description = {
@@ -33,10 +33,10 @@ feature_description = {
     'image/source_id': tf.io.FixedLenFeature([], tf.string),
     'image/encoded': tf.io.FixedLenFeature([], tf.string),
     'image/format': tf.io.FixedLenFeature([], tf.string),
-    'image/object/bbox/xmin': tf.io.VarLenFeature(tf.float32),
-    'image/object/bbox/xmax': tf.io.VarLenFeature(tf.float32),
     'image/object/bbox/ymin': tf.io.VarLenFeature(tf.float32),
+    'image/object/bbox/xmin': tf.io.VarLenFeature(tf.float32),
     'image/object/bbox/ymax': tf.io.VarLenFeature(tf.float32),
+    'image/object/bbox/xmax': tf.io.VarLenFeature(tf.float32),
     'image/object/class/text': tf.io.VarLenFeature(tf.string),
     'image/object/class/label': tf.io.VarLenFeature(tf.int64),
     'image/segmentation/mask': tf.io.FixedLenFeature([], tf.string),
@@ -99,10 +99,10 @@ def img_to_example(filename, metadata, objects, pngfile):
         example (bytes): The serialized TensorFlow example.
     """
     image_string = load_file(filename)
-    boxes_x0 = [b.x0 for b in objects]
     boxes_y0 = [b.y0 for b in objects]
-    boxes_x1 = [b.x1 for b in objects]
+    boxes_x0 = [b.x0 for b in objects]
     boxes_y1 = [b.y1 for b in objects]
+    boxes_x1 = [b.x1 for b in objects]
     boxes_cl = [b.cl for b in objects]
     boxes_lb = [b.lb for b in objects]
     h = int(metadata['height'])
@@ -124,10 +124,10 @@ def img_to_example(filename, metadata, objects, pngfile):
         'image/source_id': bytes_feature(metadata['name']),
         'image/encoded': bytes_feature(image_string),
         'image/format': bytes_feature(metadata['format']),
-        'image/object/bbox/xmin': float_feature(boxes_x0),
-        'image/object/bbox/xmax': float_feature(boxes_x1),
         'image/object/bbox/ymin': float_feature(boxes_y0),
+        'image/object/bbox/xmin': float_feature(boxes_x0),
         'image/object/bbox/ymax': float_feature(boxes_y1),
+        'image/object/bbox/xmax': float_feature(boxes_x1),
         'image/object/class/text': bytes_feature(boxes_lb),
         'image/object/class/label': int64_feature(boxes_cl),
         'image/segmentation/mask': bytes_feature(seg_string),
@@ -143,7 +143,7 @@ def img_from_example(example):
         example (tf.Tensor): One serialized example to be parsed.
     Returns:
         image (tf.Tensor): Pixel values of the image (HxBxC).
-        bboxes (tf.Tensor): Bounding boxes of the image.
+        bboxes (tf.Tensor): Bounding boxes of the image in yx format.
         classes (tf.Tensor): Numeric object classes of the image.
         mask (tf.Tensor): Segmentation mask of the image.
         has_mask (tf.Tensor): Boolean whether a segmentation mask exists.
@@ -160,11 +160,11 @@ def img_from_example(example):
     # fetch classes
     classes = data['image/object/class/label'].values
     # create bounding boxes
-    x0_part = tf.expand_dims(data['image/object/bbox/xmin'].values, 1)
     y0_part = tf.expand_dims(data['image/object/bbox/ymin'].values, 1)
-    x1_part = tf.expand_dims(data['image/object/bbox/xmax'].values, 1)
+    x0_part = tf.expand_dims(data['image/object/bbox/xmin'].values, 1)
     y1_part = tf.expand_dims(data['image/object/bbox/ymax'].values, 1)
-    bboxes = tf.concat([x0_part, y0_part, x1_part, y1_part], 1)
+    x1_part = tf.expand_dims(data['image/object/bbox/xmax'].values, 1)
+    bboxes = tf.concat([y0_part, x0_part, y1_part, x1_part], 1)
     # return image, classes & bboxes
     return image, classes, bboxes, mask, has_mask, name
 

@@ -7,13 +7,12 @@ from tensorflow.keras.applications import (
     MobileNetV3Small, MobileNetV3Large)
 from tensorflow.keras.applications.mobilenet_v2 import (
     MobileNetV2, preprocess_input as mnet2_prep)
-from tensorflow.keras.applications.vgg16 import (
-    VGG16, preprocess_input as vgg16_prep)
 
 from lib.ssd import (
     detection_heads, get_default_boxes_cw, ssd_base_outputs)
 from lib.deeplab import add_deeplab_features
 from lib.config import Config
+from lib.vgg import vgg16_model
 
 
 def ssd_deeplab_model(n_det: int, n_seg: int, config: Config) -> tuple:
@@ -26,8 +25,7 @@ def ssd_deeplab_model(n_det: int, n_seg: int, config: Config) -> tuple:
         base = MobileNetV2(input_tensor=input_layer, include_top=False)
         prep = mnet2_prep
     elif config.base == "VGG16":
-        base = VGG16(input_tensor=input_layer, include_top=False)
-        prep = vgg16_prep
+        base, prep = vgg16_model(input_tensor=input_layer)
     elif config.base == "MobileNetV3Small":
         base = MobileNetV3Small(input_tensor=input_layer, include_top=False)
         prep = None

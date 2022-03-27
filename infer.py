@@ -9,9 +9,8 @@ from tqdm import tqdm
 
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
-    filter_empty_samples, filter_no_mask, preprocess_np, preprocess_tf)
-from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
-from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf, to_cw
+    filter_empty_samples, filter_no_mask, preprocess_tf)
+from lib.tf_bbox_utils import BBoxUtils, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation
@@ -55,11 +54,6 @@ def main():
         help='File with class names for segmentation.'
     )
     parser.add_argument(
-        '--use-numpy',
-        action='store_true',
-        help='Use (slower) numpy for encoding of ground truth.'
-    )
-    parser.add_argument(
         '--model-config',
         type=str,
         help='Specify configuration yaml file for model.',
@@ -71,7 +65,6 @@ def main():
     batch_size = args.batch_size
     det_classes = args.det_classes
     seg_classes = args.seg_classes
-    use_numpy = args.use_numpy
     model_config = args.model_config
     # create output directories if missing
     os.makedirs(f"{outdir}/orig-annotated", exist_ok=True)
@@ -110,10 +103,6 @@ def main():
     _, _, _, _, default_boxes_cw, prep = models
 
     # Bounding box utility object
-    if use_numpy:
-        BBoxUtils = BBoxUtilsNp
-    else:
-        BBoxUtils = BBoxUtilsTf
     bbox_util = None if n_det == 0 else BBoxUtils(
         n_det, default_boxes_cw)
 
@@ -130,14 +119,9 @@ def main():
         val_ds = val_ds.filter(filter_no_mask)
 
     # Preprocess data
-    if use_numpy:
-        val_ds_preprocessed = val_ds.map(
-            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg)
-        )
-    else:
-        val_ds_preprocessed = val_ds.map(
-            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg)
-        )
+    val_ds_preprocessed = val_ds.map(
+        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg)
+    )
 
     # Create batches
     val_ds_batch = val_ds_preprocessed.batch(
@@ -161,30 +145,30 @@ def main():
     for x in tqdm(zip(*pr, i_origs)):
         ds_size += 1
         if n_seg == 0:
-            p_conf, p_locs, (img, g_cl, g_xy, g_sg, _, nm) = x
+            p_conf, p_locs, (img, g_cl, g_yx, g_sg, _, nm) = x
         elif n_det == 0:
-            p_segs, (img, g_cl, g_xy, g_sg, _, nm) = x
+            p_segs, (img, g_cl, g_yx, g_sg, _, nm) = x
         else:
-            p_conf, p_locs, p_segs, (img, g_cl, g_xy, g_sg, _, nm) = x
+            p_conf, p_locs, p_segs, (img, g_cl, g_yx, g_sg, _, nm) = x
         name = nm.decode('utf-8')
         if n_det > 0:
-            p_cl, p_sc, p_xy = bbox_util.pred_to_boxes(p_conf, p_locs)
-            det_eval.evaluate_sample(g_cl, g_xy, p_cl, p_sc, p_xy)
+            p_cl, p_sc, p_yx = bbox_util.pred_to_boxes(p_conf, p_locs)
+            det_eval.evaluate_sample(g_cl, g_yx, p_cl, p_sc, p_yx)
             file_name = f"{outdir}/orig-annotated/{name}.jpg"
-            annotate_boxes(img, g_cl, None, g_xy, det_names, file_name)
+            annotate_boxes(img, g_cl, None, g_yx, det_names, file_name)
             file_name = f"{outdir}/pred-annotated/{name}.jpg"
-            annotate_boxes(img, p_cl, p_sc, p_xy, det_names, file_name)
+            annotate_boxes(img, p_cl, p_sc, p_yx, det_names, file_name)
             # create output file for evaluation
-            p_cw = to_cw(p_xy)
+            p_cw = to_cw(p_yx)
             with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
                 for i, cw in enumerate(p_cw):
-                    xy = p_xy[i]
+                    yx = p_yx[i]
                     cl = p_cl[i].item()
                     sc = p_sc[i].item()
                     b_str = " ".join([str(b) for b in cw])
-                    b2_str = " ".join([str(b) for b in xy])
+                    b2_str = " ".join([str(b) for b in yx])
                     f.write(f"{cl} {sc} {b_str}\n")
-                    f.write(f"# xy: {cl} {sc} {b2_str}\n")
+                    f.write(f"# yx: {cl} {sc} {b2_str}\n")
         if n_seg > 0:
             # evaluation of segmentation
             seg_eval.evaluate_sample(g_sg, p_segs)

@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.metrics import MeanIoU, Metric
 
-from lib.np_bbox_utils import BBoxUtils, iou_xy
+from lib.np_bbox_utils import BBoxUtils, iou_yx
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \
@@ -104,12 +104,12 @@ class MeanAveragePrecisionMetric(Metric):
                 y_t = y_true[i, ...]
                 y_p = y_pred[i, ...]
                 # 1. get boxes from gt and predictions
-                t_xy, t_cl, _ = self.bbox_util.pred_to_boxes(y_t)
-                p_xy, p_cl, sc = self.bbox_util.pred_to_boxes(y_p)
+                t_yx, t_cl, _ = self.bbox_util.pred_to_boxes(y_t)
+                p_yx, p_cl, sc = self.bbox_util.pred_to_boxes(y_p)
                 # no predictions?
-                if len(p_xy) == 0:
+                if len(p_yx) == 0:
                     for cl in set(t_cl):
-                        self.gt_count[cl] += len(t_xy[t_cl == cl])
+                        self.gt_count[cl] += len(t_yx[t_cl == cl])
                     continue
                 # 2. match gt boxes with predictions
                 # Find for each prediction box the best-matching gt box
@@ -124,22 +124,22 @@ class MeanAveragePrecisionMetric(Metric):
                     cl_t_mask = (t_cl == cl)
                     cl_p_mask = (p_cl == cl)
                     # true & pred boxes
-                    cl_t_xy = t_xy[cl_t_mask]
-                    cl_p_xy = p_xy[cl_p_mask]
+                    cl_t_yx = t_yx[cl_t_mask]
+                    cl_p_yx = p_yx[cl_p_mask]
                     # pred scores
                     cl_sc = sc[cl_p_mask]
                     # number of ground-truth boxes for this class
-                    self.gt_count[cl] += len(cl_t_xy)
+                    self.gt_count[cl] += len(cl_t_yx)
                     # no prediction boxes?
-                    if len(cl_p_xy) == 0:
+                    if len(cl_p_yx) == 0:
                         continue
                     # no ground-truth boxes? we will add all
                     # predicted boxes to the unmatched ones
-                    if len(cl_t_xy) == 0:
+                    if len(cl_t_yx) == 0:
                         self.nomatch_scores[cl] += cl_sc.tolist()
                         continue
                     # get IoU value for box combinations
-                    iou = iou_xy(cl_t_xy, cl_p_xy, pairwise=False)
+                    iou = iou_yx(cl_t_yx, cl_p_yx, pairwise=False)
                     # filter - which IoU-values are above threshold?
                     iou_flag = (iou > self.iou_threshold)
                     # look in each row for at least one match

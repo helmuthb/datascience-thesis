@@ -89,7 +89,7 @@ def annotate_segmentation(img: np.ndarray, gt: np.ndarray, pred: np.ndarray,
 
 
 def annotate_boxes(img: np.ndarray,
-                   b_cl: np.ndarray, b_sc: np.ndarray, b_xy: np.ndarray,
+                   b_cl: np.ndarray, b_sc: np.ndarray, b_yx: np.ndarray,
                    classes: List[str], file_name: str):
     """Annotate an image with the detected (or original) boxes.
     The resulting image is saved into the specified file name.
@@ -98,26 +98,26 @@ def annotate_boxes(img: np.ndarray,
         img (np.ndarray(width, height, 3): Image to annotate.
         b_cl (np.ndarray [n]): Classes corresponding to bounding boxes.
         b_sc (np.ndarray [n]): Class score for bounding boxes.
-        b_xy (np.ndarray [n, 4]): x0/y0/x1/y1 bounding boxes in [0, 1].
+        b_yx (np.ndarray [n, 4]): y0/x0/y1/x1 bounding boxes in [0, 1].
         classes (list[str]): List of class names.
         file_name (str): Name of the file where the result is saved to.
     """
-    # get image width / height
-    img_width = img.shape[1]
+    # get image height / width
     img_height = img.shape[0]
+    img_width = img.shape[1]
     # colormap = plt.cm.hsv(np.linspace(0, 1, len(classes))).tolist()
     colormap = get_colormap(len(classes), as_int=True)
     # blow up bounding boxes
-    boxes_xy = b_xy.copy()
-    boxes_xy[:, 0] *= img_width
-    boxes_xy[:, 1] *= img_height
-    boxes_xy[:, 2] *= img_width
-    boxes_xy[:, 3] *= img_height
+    boxes_yx = b_yx.copy()
+    boxes_yx[:, 0] *= img_height
+    boxes_yx[:, 1] *= img_width
+    boxes_yx[:, 2] *= img_height
+    boxes_yx[:, 3] *= img_width
     # draw image
     fig = plt.figure(figsize=(20, 12))
     plt.imshow(img / 256.)
     ax = plt.gca()
-    for i, box_xy in enumerate(boxes_xy):
+    for i, box_yx in enumerate(boxes_yx):
         cl = b_cl[i]
         color = [x/256 for x in colormap[cl]]
         if cl >= 0 and cl < len(classes):
@@ -129,10 +129,10 @@ def annotate_boxes(img: np.ndarray,
             sc = b_sc[i].round(2)
             label = f"{label}: {sc}"
         # draw bounding box
-        x0 = box_xy[0]
-        y0 = box_xy[1]
-        width = box_xy[2] - box_xy[0]
-        height = box_xy[3] - box_xy[1]
+        y0 = box_yx[0]
+        x0 = box_yx[1]
+        height = box_yx[2] - box_yx[0]
+        width = box_yx[3] - box_yx[1]
         rect = plt.Rectangle((x0, y0), width, height, color=color,
                              fill=False, linewidth=2)
         ax.add_patch(rect)

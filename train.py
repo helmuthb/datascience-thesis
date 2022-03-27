@@ -13,10 +13,9 @@ from contextlib import redirect_stdout
 from tqdm import tqdm
 
 from lib.augment import Augment
-from lib.np_bbox_utils import BBoxUtils as BBoxUtilsNp
-from lib.tf_bbox_utils import BBoxUtils as BBoxUtilsTf
+from lib.tf_bbox_utils import BBoxUtils
 from lib.preprocess import (
-    filter_empty_samples, filter_no_mask, preprocess_np, preprocess_tf)
+    filter_empty_samples, filter_no_mask, preprocess_tf)
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
@@ -133,11 +132,6 @@ def main():
         help='Number of classes for segmentation (0 = object detection only).'
     )
     parser.add_argument(
-        '--use-numpy',
-        action='store_true',
-        help='Use (slower) numpy for encoding of ground truth.'
-    )
-    parser.add_argument(
         '--model-config',
         type=str,
         help='Specify configuration yaml file for model.',
@@ -191,6 +185,12 @@ def main():
         default=50,
         help='Stop after N epochs without improvement.'
     )
+    parser.add_argument(
+        '--min-epochs',
+        type=int,
+        default=50,
+        help='Minimum number of plateau epochs.'
+    )
     args = parser.parse_args()
     plot_dir = args.plot
     tfrecdir = args.tfrecords
@@ -207,7 +207,6 @@ def main():
     freeze_seg = args.freeze_seg
     n_seg = args.seg_num_classes
     n_det = args.det_num_classes
-    use_numpy = args.use_numpy
     model_config = args.model_config
     image_width = args.image_width
     image_height = args.image_height
@@ -217,6 +216,7 @@ def main():
     l2_weight = args.l2_weight
     decay_factor = args.decay_factor
     stop_after = args.stop_after
+    min_epochs = args.min_epochs
     # checks for consistency
     if n_det == 0 and n_seg == 0:
         print("Number of classes is 0 for all - no training at all.")
@@ -286,10 +286,6 @@ def main():
                 layer.trainable = False
 
     # Bounding box utility object
-    if use_numpy:
-        BBoxUtils = BBoxUtilsNp
-    else:
-        BBoxUtils = BBoxUtilsTf
     bbox_util = None if n_det == 0 else BBoxUtils(n_det, default_boxes_cw)
 
     # Load training & validation data
@@ -323,24 +319,14 @@ def main():
     num_batches = math.ceil(epoch_size / batch_size)
 
     # Preprocess data
-    if use_numpy:
-        train_ds = train_ds.map(
-            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-        val_ds = val_ds.map(
-            preprocess_np(prep, (model_width, model_width), bbox_util, n_seg),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-    else:
-        train_ds = train_ds.map(
-            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
-        val_ds = val_ds.map(
-            preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
+    train_ds = train_ds.map(
+        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+    val_ds = val_ds.map(
+        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
 
     # Shuffle & create batches
     train_ds_batch = (
@@ -476,7 +462,7 @@ def main():
             min_loss = val_loss
             model.save(out_model)
             non_improved = 0
-        elif epoch > warmup_epochs:
+        elif epoch > warmup_epochs + min_epochs:
             lr *= decay_factor
             non_improved += 1
         if non_improved >= stop_after:

@@ -87,11 +87,6 @@ class SSDLosses():
         """"Calculate the SSD losses from the predicted logits.
         """
         # hard-mining of negatives
-        # gt_cls2 = tf.where(
-        #     tf.less(gt_clss, 0),
-        #     tf.zeros_like(gt_clss),
-        #     gt_clss
-        # )
         gt_cl2 = tf.maximum(gt_cl, tf.zeros_like(gt_cl))
         # positive indexes: where we have an object in the gt
         pos_idx = gt_cl > 0

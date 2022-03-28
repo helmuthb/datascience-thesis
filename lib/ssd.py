@@ -187,18 +187,18 @@ def get_default_boxes_cw(outputs: tuple, config: dict) -> tf.Tensor:
             # rounded from 0 to 1
             y = (yi + 0.5) / height
             # square box
-            boxes.append([x, y, scale, scale])
+            boxes.append([y, x, scale, scale])
             # additional box: geom. mean between this and the next scale
             if i+1 < len(obj_scales):
                 next_scale = obj_scales[i+1]
                 additional_scale = sqrt(scale * next_scale)
             else:
                 additional_scale = 1.
-            boxes.append([x, y, additional_scale, additional_scale])
+            boxes.append([y, x, additional_scale, additional_scale])
             # additional boxes: for each ratio
             for ratio in config.ssd.aspect_ratios[i]:
                 sqrt_ratio = sqrt(ratio)
-                boxes.append([x, y, scale*sqrt_ratio, scale/sqrt_ratio])
-                boxes.append([x, y, scale/sqrt_ratio, scale*sqrt_ratio])
+                boxes.append([y, x, scale*sqrt_ratio, scale/sqrt_ratio])
+                boxes.append([y, x, scale/sqrt_ratio, scale*sqrt_ratio])
     # clip the result
     return tf.convert_to_tensor(np.clip(boxes, 0., 1.), dtype=tf.float32)

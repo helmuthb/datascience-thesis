@@ -7,7 +7,7 @@ Preprocessing of images for SSD.
 import tensorflow as tf
 from typing import Callable, Tuple, List
 
-from .tf_bbox_utils import BBoxUtils
+from .bbox_utils import BBoxUtils
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2021, Christian Doppler Laboratory for ' \

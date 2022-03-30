@@ -57,7 +57,7 @@ def to_yx(box_cw):
     return box_yx
 
 
-def correct_box(box_yx, clip_to=None):
+def correct_box(box_yx, clip_to: float = None):
     """Correct a box in y0/x0/y1/x1 coordinates.
     If x0 > x1 or y0 > y1 then the box is corrected to x1=x0 or y1=y0.
     Additionally the values are clipped as specified.
@@ -70,11 +70,11 @@ def correct_box(box_yx, clip_to=None):
     box_br = tf.maximum(box_yx[..., 2:], box_tl)
     box_yx = tf.concat([box_tl, box_br], axis=-1)
     if clip_to is None:
-        return tf.maximum(box_yx, 0)
-    return tf.clip_by_value(box_yx, 0, clip_to)
+        return tf.maximum(box_yx, 0.)
+    return tf.clip_by_value(box_yx, 0., clip_to)
 
 
-def iou_yx(b1_yx, b2_yx, clip_to=None):
+def iou_yx(b1_yx, b2_yx, clip_to: float = None):
     """Calculate the Intersection over Union between two lists of boxes.
     One can also specify just two boxes.
 
@@ -91,8 +91,8 @@ def iou_yx(b1_yx, b2_yx, clip_to=None):
     # top-left / bottom-right points of the intersection
     i_tl = tf.math.maximum(b1_yx[..., :2], b2_yx[..., :2])
     i_br = tf.math.minimum(b1_yx[..., 2:], b2_yx[..., 2:])
-    # area of intersection
-    i_hw = i_br - i_tl
+    # area of intersection - clipping as the intersection might be 0
+    i_hw = tf.math.maximum(i_br - i_tl, 0.)
     i_ar = i_hw[..., 0] * i_hw[..., 1]
     # area of b1 & b2 boxes
     b1_hw = b1_yx[..., 2:] - b1_yx[..., :2]
@@ -114,9 +114,8 @@ class BBoxUtils(object):
     NMS step is stored in the object.
     """
     def __init__(self, n_classes, default_boxes_cw,
-                 variances=(.1, .2), min_pos_iou=.5,
-                 max_neg_iou=.3, min_area=0.00001, min_confidence=0.3,
-                 iou_threshold=.5, top_k=200):
+                 variances=(.1, .2), min_area=0.00001,
+                 min_confidence=0.3, iou_threshold=.5, top_k=200):
         """Create BBoxUtils object.
 
         The parameters are used thoughout the object detection process.
@@ -126,14 +125,12 @@ class BBoxUtils(object):
             variances (tuple[2]): Factors to scale the distortion (horiz/vert).
             min_area (float): Minimum area of a box.
             default_boxes_cw (tensor [n1, 4]): List of default boxes.
-            min_pos_iou (float): Minimum IoU value for mapping default boxes
-                not assigned as optimal.
-            max_neg_iou (float): Maximum IoU value for mapping to background.
             min_area (float): Minimum area of a ground truth box to be used.
             min_confidence (float): Minimum confidence (score) required for
                 using a prediction.
-            iou_threshold (float): Maximum IoU value for not discarding
-                default boxes similar to the one with highest confidence.
+            iou_threshold (float): IoU threshold value used to discard
+                duplicates (at prediction time) and inferior-matching
+                default boxes (at training time).
             top_k (float): Maximum number of default boxes to keep.
         """
         self.n_classes = n_classes
@@ -141,8 +138,6 @@ class BBoxUtils(object):
         self.default_boxes_yx = to_yx(default_boxes_cw)
         self.n_default_boxes = default_boxes_cw.shape[0]
         self.variances = tf.convert_to_tensor(variances, dtype=tf.float32)
-        self.min_pos_iou = min_pos_iou
-        self.max_neg_iou = max_neg_iou
         self.min_area = min_area
         self.min_confidence = min_confidence
         self.iou_threshold = iou_threshold
@@ -194,9 +189,8 @@ class BBoxUtils(object):
         First each bounding box is mapped to the default box of highest match,
         such that each default box is used only once.
         The remaining default boxes are mapped to the bounding box with
-        highest IoU, as long as the IoU is at least min_pos_iou.
-        The remaing default boxes are mapped to background if the largest IoU
-        is less than max_neg_iou; otherwise they are marked as neutral.
+        highest IoU, as long as the IoU is at least iou_threshold.
+        The remaing default boxes are mapped to background.
 
         Args:
             boxes_cl (tensor [n1, 1]): Array of classes per box.
@@ -205,48 +199,39 @@ class BBoxUtils(object):
             gt_clss (tensor [n_defaults]): Ground truth classes.
             gt_locs (tensor [n_defaults, 4]): Location ground truth.
         """
-        iou = iou_yx(boxes_yx, self.default_boxes_yx, clip_to=1)
-        # for each default find the best IoU
-        max_iou_default = tf.math.reduce_max(iou, axis=0)
+        iou = iou_yx(boxes_yx, self.default_boxes_yx, clip_to=1.)
+        # for each default find the best groundtruth's IoU
+        default_best_gt_iou = tf.math.reduce_max(iou, axis=0)
         # for each default find the best gt index
-        max_gt_idx_default = tf.math.argmax(iou, axis=0)
+        default_best_gt = tf.math.argmax(iou, axis=0)
         # for each gt find the best default index
-        max_default_gt_idx = tf.math.argmax(iou, axis=1)
-        max_default_gt_idx_2 = tf.expand_dims(max_default_gt_idx, axis=1)
+        gt_best_default = tf.math.argmax(iou, axis=1)
+        gt_best_default_expanded = tf.expand_dims(gt_best_default, axis=1)
 
         # best default for each ground truth has priority ...
-        max_gt_idx_default = tf.tensor_scatter_nd_update(
-            max_gt_idx_default,
-            max_default_gt_idx_2,
-            tf.range(tf.shape(max_default_gt_idx)[0], dtype=tf.int64)
+        default_best_gt = tf.tensor_scatter_nd_update(
+            default_best_gt,
+            gt_best_default_expanded,
+            tf.range(tf.shape(gt_best_default)[0], dtype=tf.int64)
         )
         # ... and is set to IoU=1 to defy minimum IoU criteria
-        max_iou_default = tf.tensor_scatter_nd_update(
-            max_iou_default,
-            max_default_gt_idx_2,
-            tf.ones_like(max_default_gt_idx, dtype=tf.float32)
+        default_best_gt_iou = tf.tensor_scatter_nd_update(
+            default_best_gt_iou,
+            gt_best_default_expanded,
+            tf.ones_like(gt_best_default, dtype=tf.float32)
         )
 
-        # find class for each default
-        gt_clss = tf.gather(boxes_cl, max_gt_idx_default)
-
         # find box for each default and convert to distortion
-        boxes_yx = tf.gather(boxes_yx, max_gt_idx_default)
+        boxes_yx = tf.gather(boxes_yx, default_best_gt)
         boxes_cw = to_cw(boxes_yx)
         gt_locs = self._encode_cw(boxes_cw)
 
-        # set class to -1 (neutral) if IoU too small for match
-        # but maybe detected by network
-        if False:
-            gt_clss = tf.where(
-                tf.less(max_iou_default, self.min_pos_iou),
-                -tf.ones_like(gt_clss),
-                gt_clss
-            )
+        # find class for each default
+        gt_clss = tf.gather(boxes_cl, default_best_gt)
 
         # set class to 0 (background) if IoU even smaller
         gt_clss = tf.where(
-            tf.less(max_iou_default, self.max_neg_iou),
+            tf.less(default_best_gt_iou, self.iou_threshold),
             tf.zeros_like(gt_clss),
             gt_clss
         )
@@ -319,7 +304,7 @@ class BBoxUtils(object):
         #     boxes=pr_yx,
         #     scores=pr_max_sc,
         #     max_output_size=self.top_k,
-        #     iou_threshold=self.min_pos_iou,
+        #     iou_threshold=self.iou_threshold,
         #     score_threshold=self.min_confidence
         # )
 

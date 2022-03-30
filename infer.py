@@ -10,7 +10,7 @@ from tqdm import tqdm
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
     filter_empty_samples, filter_no_mask, preprocess_tf)
-from lib.tf_bbox_utils import BBoxUtils, to_cw
+from lib.bbox_utils import BBoxUtils, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
 from lib.visualize import annotate_boxes, annotate_segmentation

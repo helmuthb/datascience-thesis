@@ -58,7 +58,7 @@ def ssd_base_outputs(model: Model, config: dict) -> tuple:
             output = bottleneck(inputs=output, **ssd_layer)
         else:
             raise ValueError(f'Configuration `ssd.extra_layers_type` has '
-                             f'unknown value {config.ssd.extra_layers_type}')
+                             f'unknown value "{config.ssd.extra_layers_type}"')
         outputs.append(output)
     # return model & layers
     return outputs
@@ -181,7 +181,8 @@ def get_default_boxes_cw(outputs: tuple, config: dict) -> tf.Tensor:
     for i in range(len(obj_scales)):
         scale = obj_scales[i]
         height, width = outputs[i].shape[1:3]
-        for yi, xi in product(range(height), range(width)):
+        # for yi, xi in product(range(height), range(width)):
+        for xi, yi in product(range(width), range(height)):
             # rounded from 0 to 1
             x = (xi + 0.5) / width
             # rounded from 0 to 1

@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
-from lib.tf_bbox_utils import iou_yx
+from lib.bbox_utils import iou_yx
 
 
 __author__ = 'Helmuth Breitenfellner'
@@ -272,7 +272,7 @@ class DetEval(object):
                 # set of matched ground boxes so far
                 gt_matched = set()
                 # calculate intersections over union
-                iou = iou_yx(pr_c_yx, gt_c_yx, pairwise=False)
+                iou = iou_yx(pr_c_yx, gt_c_yx)
                 for i, scr in enumerate(pr_c_sc):
                     # find ground truth with highest IoU
                     gt_idx = np.argmax(iou[i, :])

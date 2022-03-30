@@ -12,8 +12,8 @@ from contextlib import redirect_stdout
 
 from tqdm import tqdm
 
-from lib.augment import Augment
-from lib.tf_bbox_utils import BBoxUtils
+from lib.augment import augmentor
+from lib.bbox_utils import BBoxUtils
 from lib.preprocess import (
     filter_empty_samples, filter_no_mask, preprocess_tf)
 from lib.tfr_utils import read_tfrecords
@@ -175,6 +175,12 @@ def main():
         help='L2 normalization weight.'
     )
     parser.add_argument(
+        '--decay-epochs',
+        type=int,
+        default=10,
+        help='Reduce learning rate every N epochs after non-improvement.'
+    )
+    parser.add_argument(
         '--decay-factor',
         type=float,
         default=0.9,
@@ -216,6 +222,7 @@ def main():
     warmup_learning_rate = args.warmup_learning_rate
     learning_rate = args.learning_rate
     l2_weight = args.l2_weight
+    decay_epochs = args.decay_epochs
     decay_factor = args.decay_factor
     stop_after = args.stop_after
     min_epochs = args.min_epochs
@@ -296,14 +303,9 @@ def main():
 
     # Augment data
     if augment:
-        augmentor = Augment(image_height, image_width)
-        augmentor.crop_and_pad()
-        augmentor.horizontal_flip()
-        augmentor.hsv()
-        augmentor.random_brightness_contrast()
         train_ds = train_ds.map(
-            augmentor.tf_wrap(),
-            num_parallel_calls=tf.data.AUTOTUNE
+                augmentor(image_height, image_width),
+                num_parallel_calls=tf.data.AUTOTUNE
         )
 
     # Filter out empty samples - if object detection requested
@@ -471,8 +473,9 @@ def main():
             model.save(out_model)
             non_improved = 0
         elif epoch > warmup_epochs + min_epochs:
-            lr *= decay_factor
             non_improved += 1
+            if non_improved % decay_epochs == 0:
+                lr *= decay_factor
         if non_improved >= stop_after:
             # end of training
             print(f"No improvement after {non_improved} epochs - ending.")

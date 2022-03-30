@@ -110,8 +110,8 @@ def subset_seg_classes(classes: List[str], subset: List[str]):
     return _subset_wrap
 
 
-def preprocess_tf(prep: Callable, size: Tuple[int],
-                  bbox_utils: BBoxUtils, n_seg: int):
+def preprocess(prep: Callable, size: Tuple[int],
+               bbox_utils: BBoxUtils, n_seg: int):
     """Preprocess image: resize, scale, filter small boxes, drop name.
 
     Args:
@@ -148,18 +148,12 @@ def preprocess_tf(prep: Callable, size: Tuple[int],
         return image, mask
 
     def _preprocess_both(image, boxes_cl, boxes_yx, mask, has_mask, name):
-        from lib.other_box import compute_target
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
         image = prep(image)
         # map defaults to boxes
-        # gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
-        gt_clss, gt_locs = compute_target(
-            bbox_utils.default_boxes_cw,
-            boxes_yx,
-            boxes_cl,
-            )
+        gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension

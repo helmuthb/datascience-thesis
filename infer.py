@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from lib.combined import ssd_deeplab_model
 from lib.preprocess import (
-    filter_empty_samples, filter_no_mask, preprocess_tf)
+    filter_empty_samples, filter_no_mask, preprocess)
 from lib.bbox_utils import BBoxUtils, to_cw
 from lib.evaluate import DetEval, SegEval
 from lib.tfr_utils import read_tfrecords
@@ -120,7 +120,7 @@ def main():
 
     # Preprocess data
     val_ds_preprocessed = val_ds.map(
-        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg)
+        preprocess(prep, (model_width, model_width), bbox_util, n_seg)
     )
 
     # Create batches

@@ -15,7 +15,7 @@ from tqdm import tqdm
 from lib.augment import augmentor
 from lib.bbox_utils import BBoxUtils
 from lib.preprocess import (
-    filter_empty_samples, filter_no_mask, preprocess_tf)
+    filter_empty_samples, filter_no_mask, preprocess)
 from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
@@ -107,7 +107,7 @@ def main():
     parser.add_argument(
         '--freeze-base-epochs',
         type=int,
-        default=5,
+        default=20,
         help='Freeze base layers for number of epochs.'
     )
     parser.add_argument(
@@ -153,7 +153,7 @@ def main():
     parser.add_argument(
         '--warmup-epochs',
         type=int,
-        default=2,
+        default=5,
         help='Warmup epochs for learning rate schedule.'
     )
     parser.add_argument(
@@ -165,7 +165,7 @@ def main():
     parser.add_argument(
         '--learning-rate',
         type=float,
-        default=1e-2,
+        default=1e-3,
         help='Peak learning rate after warmup.'
     )
     parser.add_argument(
@@ -183,7 +183,7 @@ def main():
     parser.add_argument(
         '--decay-factor',
         type=float,
-        default=0.9,
+        default=0.5,
         help='Factor to reduce learning rate after non-improvement.'
     )
     parser.add_argument(
@@ -195,7 +195,7 @@ def main():
     parser.add_argument(
         '--min-epochs',
         type=int,
-        default=50,
+        default=100,
         help='Minimum number of plateau epochs.'
     )
     args = parser.parse_args()
@@ -324,11 +324,11 @@ def main():
 
     # Preprocess data
     train_ds = train_ds.map(
-        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+        preprocess(prep, (model_width, model_width), bbox_util, n_seg),
         num_parallel_calls=tf.data.AUTOTUNE
     )
     val_ds = val_ds.map(
-        preprocess_tf(prep, (model_width, model_width), bbox_util, n_seg),
+        preprocess(prep, (model_width, model_width), bbox_util, n_seg),
         num_parallel_calls=tf.data.AUTOTUNE
     )
 

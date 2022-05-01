@@ -181,8 +181,8 @@ def get_default_boxes_cw(outputs: tuple, config: dict) -> tf.Tensor:
     for i in range(len(obj_scales)):
         scale = obj_scales[i]
         height, width = outputs[i].shape[1:3]
-        # for yi, xi in product(range(height), range(width)):
-        for xi, yi in product(range(width), range(height)):
+        # for xi, yi in product(range(width), range(height)):
+        for yi, xi in product(range(height), range(width)):
             # rounded from 0 to 1
             x = (xi + 0.5) / width
             # rounded from 0 to 1

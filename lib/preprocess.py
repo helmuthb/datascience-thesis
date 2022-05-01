@@ -136,7 +136,8 @@ def preprocess(prep: Callable, size: Tuple[int],
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
-        image = prep(image)
+        if prep is not None:
+            image = prep(image)
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -151,7 +152,8 @@ def preprocess(prep: Callable, size: Tuple[int],
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
-        image = prep(image)
+        if prep is not None:
+            image = prep(image)
         # map defaults to boxes
         gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
         # resize mask

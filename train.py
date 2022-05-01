@@ -46,157 +46,168 @@ def main():
         '--tfrecords',
         type=str,
         help='Directory with TFrecords.',
-        required=True
+        required=True,
     )
     parser.add_argument(
         '--in-model',
         type=str,
-        help='Folder for input model which will be further trained.'
+        help='Folder for input model which will be further trained.',
     )
     parser.add_argument(
         '--out-model',
         type=str,
         help='Folder for output model after training.',
-        required=True
+        required=True,
     )
     parser.add_argument(
         '--plot',
         type=str,
-        help='Folder for model plots if desired.'
+        help='Folder for model plots if desired.',
     )
     parser.add_argument(
         '--epochs',
         type=int,
         default=1000,
-        help='Maximum number of epochs (if not stopped early).'
+        help='Maximum number of epochs (if not stopped early).',
     )
     parser.add_argument(
         '--logs',
         type=str,
-        help='Folder for storing training logs.'
+        help='Folder for storing training logs.',
     )
     parser.add_argument(
         '--augment',
         action='store_true',
-        help='Perform augmentation.'
+        help='Perform augmentation.',
     )
     parser.add_argument(
         '--det-weight',
         type=float,
         default=1.0,
-        help='Weight for object detection training (default = 1.0).'
+        help='Weight for object detection training (default = 1.0).',
     )
     parser.add_argument(
         '--seg-weight',
         type=float,
         default=1.0,
-        help='Weight for segmentation training (default = 1.0).'
+        help='Weight for segmentation training (default = 1.0).',
     )
     parser.add_argument(
         '--batch-size',
         type=int,
         default=8,
-        help='Number of samples per batch (default=8).'
+        help='Number of samples per batch (default=8).',
     )
     parser.add_argument(
         '--optimizer',
         type=str,
         default="adam",
-        help='Optimizer to use ("adam", "sgd") - default "adam".'
+        help='Optimizer to use ("adam", "sgd") - default "adam".',
     )
     parser.add_argument(
         '--freeze-base-epochs',
         type=int,
         default=20,
-        help='Freeze base layers for number of epochs.'
+        help='Freeze base layers for number of epochs.',
     )
     parser.add_argument(
         '--freeze-det',
         action='store_true',
-        help='Freeze object detection layers.'
+        help='Freeze object detection layers.',
     )
     parser.add_argument(
         '--freeze-seg',
         action='store_true',
-        help='Freeze segmentation layers.'
+        help='Freeze segmentation layers.',
     )
     parser.add_argument(
         '--det-num-classes',
         type=int,
         default=0,
-        help='Number of classes for object detection (0 = segmentation only).'
+        help='Number of classes for object detection (0 = segmentation only).',
     )
     parser.add_argument(
         '--seg-num-classes',
         type=int,
         default=0,
-        help='Number of classes for segmentation (0 = object detection only).'
+        help='Number of classes for segmentation (0 = object detection only).',
     )
     parser.add_argument(
         '--model-config',
         type=str,
         help='Specify configuration yaml file for model.',
-        required=True
+        required=True,
     )
     parser.add_argument(
         '--image-width',
         type=int,
         default=1920,
-        help='Specify original image width.'
+        help='Specify original image width.',
     )
     parser.add_argument(
         '--image-height',
         type=int,
         default=1080,
-        help='Specify original image height.'
+        help='Specify original image height.',
     )
     parser.add_argument(
         '--warmup-epochs',
         type=int,
         default=5,
-        help='Warmup epochs for learning rate schedule.'
+        help='Warmup epochs for learning rate schedule.',
     )
     parser.add_argument(
         '--warmup-learning-rate',
         type=float,
         default=1e-4,
-        help='Warmup learning rate.'
+        help='Warmup learning rate.',
     )
     parser.add_argument(
         '--learning-rate',
         type=float,
         default=1e-3,
-        help='Peak learning rate after warmup.'
+        help='Peak learning rate after warmup.',
     )
     parser.add_argument(
         '--l2-weight',
         type=float,
         default=5e-5,
-        help='L2 normalization weight.'
+        help='L2 normalization weight.',
     )
     parser.add_argument(
         '--decay-epochs',
         type=int,
         default=10,
-        help='Reduce learning rate every N epochs after non-improvement.'
+        help='Reduce learning rate every N epochs after non-improvement.',
     )
     parser.add_argument(
         '--decay-factor',
         type=float,
         default=0.5,
-        help='Factor to reduce learning rate after non-improvement.'
+        help='Factor to reduce learning rate after non-improvement.',
     )
     parser.add_argument(
         '--stop-after',
         type=int,
         default=50,
-        help='Stop after N epochs without improvement.'
+        help='Stop after N epochs without improvement.',
     )
     parser.add_argument(
         '--min-epochs',
         type=int,
         default=100,
-        help='Minimum number of plateau epochs.'
+        help='Minimum number of plateau epochs.',
+    )
+    parser.add_argument(
+        '--num-samples',
+        type=int,
+        default=None,
+        help='Only use a specified number of samples for training.',
+    )
+    parser.add_argument(
+        '--no-validation-set',
+        action='store_true',
+        help='Use training data subset for validation step.',
     )
     args = parser.parse_args()
     plot_dir = args.plot
@@ -226,6 +237,8 @@ def main():
     decay_factor = args.decay_factor
     stop_after = args.stop_after
     min_epochs = args.min_epochs
+    num_samples = args.num_samples
+    use_validation_set = not args.no_validation_set
     # checks for consistency
     if n_det == 0 and n_seg == 0:
         print("Number of classes is 0 for all - no training at all.")
@@ -298,15 +311,12 @@ def main():
     bbox_util = None if n_det == 0 else BBoxUtils(n_det, default_boxes_cw)
 
     # Load training & validation data
-    train_ds = read_tfrecords(f"{tfrecdir}/train.tfrec", shuffle=True)
+    # No shuffling if no validation data is used
+    train_ds = read_tfrecords(
+        f"{tfrecdir}/train.tfrec",
+        shuffle=use_validation_set
+    )
     val_ds = read_tfrecords(f"{tfrecdir}/val.tfrec")
-
-    # Augment data
-    if augment:
-        train_ds = train_ds.map(
-                augmentor(image_height, image_width),
-                num_parallel_calls=tf.data.AUTOTUNE
-        )
 
     # Filter out empty samples - if object detection requested
     if n_det > 0:
@@ -317,6 +327,21 @@ def main():
     if n_seg > 0:
         train_ds = train_ds.filter(filter_no_mask)
         val_ds = val_ds.filter(filter_no_mask)
+
+    # Only a subset?
+    if num_samples:
+        train_ds = train_ds.take(num_samples).cache()
+
+    # no separate validation data set?
+    if not use_validation_set:
+        val_ds = train_ds
+
+    # Augment data
+    if augment:
+        train_ds = train_ds.map(
+                augmentor(image_height, image_width),
+                num_parallel_calls=tf.data.AUTOTUNE
+        )
 
     # Count elements
     epoch_size = sum(1 for _ in train_ds)

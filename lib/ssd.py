@@ -79,7 +79,7 @@ def get_num_default_ratios(config: dict) -> List[int]:
 
 
 def head_output_ssd(prefix: str, index: int, n_out: int, n_boxes: int,
-                    inp: tf.Tensor) -> tf.Tensor:
+                    kernel_size: int, inp: tf.Tensor) -> tf.Tensor:
     """Head layer creating the boxes / class scores as used in SSD.
     Args:
         prefix (str): Prefix ("classes" or "boxes").
@@ -92,7 +92,7 @@ def head_output_ssd(prefix: str, index: int, n_out: int, n_boxes: int,
     """
     conv_2d = tf.keras.layers.Conv2D(
         filters=n_out * n_boxes,
-        kernel_size=3,
+        kernel_size=kernel_size,
         padding='same',
         name=f"{prefix}{index}_conv"
     )(inp)
@@ -149,7 +149,14 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     out_classes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
         if config.ssd.detector == 'ssd':
-            out = head_output_ssd("classes", i+1, n_classes, n_a, layer)
+            kernel_size = 3 if i < len(layers)-1 else 1
+            out = head_output_ssd(
+                prefix="classes",
+                index=i+1,
+                n_out=n_classes,
+                n_boxes=n_a,
+                kernel_size=kernel_size,
+                inp=layer)
         else:
             out = head_output_ssdlite("classes", i+1, n_classes, n_a, layer)
         out_classes.append(out)
@@ -161,7 +168,14 @@ def detection_heads(n_classes: int, layers: tuple, config: dict) -> tuple:
     out_boxes = []
     for i, (n_a, layer) in enumerate(zip(n_defaults, layers)):
         if config.ssd.detector == 'ssd':
-            out = head_output_ssd("boxes", i+1, 4, n_a, layer)
+            kernel_size = 3 if i < len(layers)-1 else 1
+            out = head_output_ssd(
+                prefix="boxes",
+                index=i+1,
+                n_out=4,
+                n_boxes=n_a,
+                kernel_size=kernel_size,
+                inp=layer)
         else:
             out = head_output_ssdlite("boxes", i+1, 4, n_a, layer)
         out_boxes.append(out)

@@ -1,4 +1,5 @@
 from inspect import getsourcefile
+import math
 import os
 import argparse
 import timeit
@@ -28,8 +29,13 @@ def main():
     parser.add_argument(
         '--model',
         type=str,
-        help='Directory for models.',
+        help='Folder or H5-file for trained model.',
         required=True
+    )
+    parser.add_argument(
+        '--load-weights',
+        action='store_true',
+        help='Use load_weights() to load compatible model.',
     )
     parser.add_argument(
         '--out-samples',
@@ -61,6 +67,8 @@ def main():
     )
     args = parser.parse_args()
     tfrecdir = args.tfrecords
+    model_path = args.model
+    load_weights = args.load_weights
     outdir = args.out_samples
     batch_size = args.batch_size
     det_classes = args.det_classes
@@ -100,8 +108,15 @@ def main():
 
     # build model (we only need the default boxes)
     models = ssd_deeplab_model(n_det, n_seg, config)
-    _, _, _, _, default_boxes_cw, prep = models
+    model, _, deeplab, ssd, default_boxes_cw, prep = models
 
+    # No object detection or segmentation?
+    if n_seg == 0:
+        model = ssd
+    elif n_det == 0:
+        model = deeplab
+
+    print(model.summary())
     # Bounding box utility object
     bbox_util = None if n_det == 0 else BBoxUtils(
         n_det, default_boxes_cw)
@@ -118,6 +133,10 @@ def main():
     if n_seg > 0:
         val_ds = val_ds.filter(filter_no_mask)
 
+    # Count elements
+    val_ds_size = sum(1 for _ in val_ds)
+    num_batches = math.ceil(val_ds_size / batch_size)
+
     # Preprocess data
     val_ds_preprocessed = val_ds.map(
         preprocess(prep, (model_width, model_width), bbox_util, n_seg)
@@ -129,61 +148,72 @@ def main():
     )
 
     # load model
-    model = tf.keras.models.load_model(args.model)
+    if load_weights:
+        model.load_weights(model_path)
+    else:
+        model = tf.keras.models.load_model(model_path)
     plot_model(model, to_file='infer-model.png', show_shapes=True)
-
-    # perform inference on validation set
-    pr = model.predict(val_ds_batch)
-    if n_det == 0:
-        pr = (pr,)
 
     # evaluation & plots
     seg_eval = SegEval(n_seg)
     det_eval = DetEval(n_det)
-    i_origs = val_ds.as_numpy_iterator()
-    ds_size = 0
-    for x in tqdm(zip(*pr, i_origs)):
-        ds_size += 1
+    for batch in tqdm(iterable=val_ds_batch, unit='bt', total=num_batches):
         if n_seg == 0:
-            p_conf, p_locs, (img, g_cl, g_yx, g_sg, _, nm) = x
+            img_prep, (g_cl, g_yx), img, nm = batch
+            p_conf, p_locs = model(img_prep, training=False)
         elif n_det == 0:
-            p_segs, (img, g_cl, g_yx, g_sg, _, nm) = x
+            img_prep, g_sg, img, nm = batch
+            p_segs = model(img_prep, training=False)
         else:
-            p_conf, p_locs, p_segs, (img, g_cl, g_yx, g_sg, _, nm) = x
-        name = nm.decode('utf-8')
-        if n_det > 0:
-            p_cl, p_sc, p_yx = bbox_util.pred_to_boxes(p_conf, p_locs)
-            det_eval.evaluate_sample(g_cl, g_yx, p_cl, p_sc, p_yx)
-            file_name = f"{outdir}/orig-annotated/{name}.jpg"
-            annotate_boxes(img, g_cl, None, g_yx, det_names, file_name)
-            file_name = f"{outdir}/pred-annotated/{name}.jpg"
-            annotate_boxes(img, p_cl, p_sc, p_yx, det_names, file_name)
-            # create output file for evaluation
-            p_cw = to_cw(p_yx)
-            with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
-                for i, cw in enumerate(p_cw):
-                    yx = p_yx[i]
-                    cl = p_cl[i].item()
-                    sc = p_sc[i].item()
-                    b_str = " ".join([str(b) for b in cw])
-                    b2_str = " ".join([str(b) for b in yx])
-                    f.write(f"{cl} {sc} {b_str}\n")
-                    f.write(f"# yx: {cl} {sc} {b2_str}\n")
-        if n_seg > 0:
-            # evaluation of segmentation
-            seg_eval.evaluate_sample(g_sg, p_segs)
-            # annotate segmentation
-            file_prefix = f"{outdir}/seg-annotated/{name}"
-            annotate_segmentation(img, g_sg, p_segs, file_prefix)
+            img_prep, (g_cl, g_yx, g_sg), img, nm = batch
+            p_conf, p_locs, p_segs = model(img_prep, training=False)
+        for i in range(len(batch)):
+            name = nm[i].numpy().decode('utf-8')
+            if n_det > 0:
+                p_cl, p_sc, p_yx = bbox_util.pred_to_boxes(
+                    p_conf[i], p_locs[i])
+                det_eval.evaluate_sample(
+                    g_cl[i].numpy(),
+                    g_yx[i].numpy(),
+                    p_cl,
+                    p_sc,
+                    p_yx)
+                file_name = f"{outdir}/orig-annotated/{name}.jpg"
+                annotate_boxes(
+                    img[i],
+                    g_cl[i].numpy(),
+                    None,
+                    g_yx[i].numpy(),
+                    det_names,
+                    file_name)
+                file_name = f"{outdir}/pred-annotated/{name}.jpg"
+                annotate_boxes(img[i], p_cl, p_sc, p_yx, det_names, file_name)
+                # create output file for evaluation
+                p_cw = to_cw(p_yx)
+                with open(f"{outdir}/pred-data/{name}.txt", "w") as f:
+                    for j, cw in enumerate(p_cw):
+                        yx = p_yx[j]
+                        cl = p_cl[j].item()
+                        sc = p_sc[j].item()
+                        b_str = " ".join([str(b) for b in cw])
+                        b2_str = " ".join([str(b) for b in yx])
+                        f.write(f"{cl} {sc} {b_str}\n")
+                        f.write(f"# yx: {cl} {sc} {b2_str}\n")
+            if n_seg > 0:
+                # evaluation of segmentation
+                seg_eval.evaluate_sample(g_sg[i], p_segs[i])
+                # annotate segmentation
+                file_prefix = f"{outdir}/seg-annotated/{name}"
+                annotate_segmentation(img[i], g_sg[i], p_segs[i], file_prefix)
     # runtime for inference
     print("Calculating running time ...")
     runtime = timeit.timeit(lambda: model.predict(val_ds_batch), number=1)
     # runtime for preprocessing
     print("Calculating preprocessing time ...")
     runtime_pre = timeit.timeit(lambda: sum(1 for i in val_ds), number=1)
-    print(f"Inference time: {runtime/ds_size} sec.")
-    print(f"Preprocessing time: {runtime_pre/ds_size} sec.")
-    print(f"Network time: {(runtime-runtime_pre)/ds_size} sec.")
+    print(f"Inference time: {runtime/val_ds_size} sec.")
+    print(f"Preprocessing time: {runtime_pre/val_ds_size} sec.")
+    print(f"Network time: {(runtime-runtime_pre)/val_ds_size} sec.")
     if n_seg > 0:
         print("Segmentation metrics")
         print(f"Mean IoU: {seg_eval.mean_iou():.2%}")

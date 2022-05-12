@@ -4,9 +4,9 @@ import math
 import os
 import time
 import argparse
-from numpy import infty
 
 import tensorflow as tf
+import numpy as np
 from tensorflow.keras.utils import plot_model
 from contextlib import redirect_stdout
 
@@ -20,6 +20,7 @@ from lib.tfr_utils import read_tfrecords
 from lib.losses import SSDLosses, DeeplabLoss
 from lib.combined import get_training_step, ssd_deeplab_model, loss_list
 from lib.config import Config
+from lib.visualize import boxes_image
 
 
 def print_model(model, name, out_folder):
@@ -51,13 +52,23 @@ def main():
     parser.add_argument(
         '--in-model',
         type=str,
-        help='Folder for input model which will be further trained.',
+        help='Folder or H5-file for input model to be further trained.',
+    )
+    parser.add_argument(
+        '--load-weights',
+        action='store_true',
+        help='Use load_weights() to load compatible model.',
     )
     parser.add_argument(
         '--out-model',
         type=str,
-        help='Folder for output model after training.',
+        help='Folder or H5-file for output model after training.',
         required=True,
+    )
+    parser.add_argument(
+        '--save-weights',
+        action='store_true',
+        help='Use save_weights() to save H5-file.',
     )
     parser.add_argument(
         '--plot',
@@ -121,16 +132,14 @@ def main():
         help='Freeze segmentation layers.',
     )
     parser.add_argument(
-        '--det-num-classes',
-        type=int,
-        default=0,
-        help='Number of classes for object detection (0 = segmentation only).',
+        '--det-classes',
+        type=str,
+        help='File with class names for object detection.'
     )
     parser.add_argument(
-        '--seg-num-classes',
-        type=int,
-        default=0,
-        help='Number of classes for segmentation (0 = object detection only).',
+        '--seg-classes',
+        type=str,
+        help='File with class names for segmentation.'
     )
     parser.add_argument(
         '--model-config',
@@ -213,7 +222,9 @@ def main():
     plot_dir = args.plot
     tfrecdir = args.tfrecords
     in_model = args.in_model
+    load_weights = args.load_weights
     out_model = args.out_model
+    save_weights = args.save_weights
     num_epochs = args.epochs
     logs = args.logs
     augment = args.augment
@@ -224,8 +235,8 @@ def main():
     freeze_base_epochs = args.freeze_base_epochs
     freeze_det = args.freeze_det
     freeze_seg = args.freeze_seg
-    n_seg = args.seg_num_classes
-    n_det = args.det_num_classes
+    det_classes = args.det_classes
+    seg_classes = args.seg_classes
     model_config = args.model_config
     image_width = args.image_width
     image_height = args.image_height
@@ -240,12 +251,28 @@ def main():
     num_samples = args.num_samples
     use_validation_set = not args.no_validation_set
     # checks for consistency
-    if n_det == 0 and n_seg == 0:
+    if det_classes is None and seg_classes is None:
         print("Number of classes is 0 for all - no training at all.")
         return
     # create folder for log files
     if logs and not os.path.exists(logs):
         os.makedirs(logs)
+
+    # number & names of classes
+    if det_classes is None:
+        det_names = []
+        n_det = 0
+    else:
+        with open(det_classes, 'r') as f:
+            det_names = f.read().splitlines()
+        n_det = len(det_names)
+    if seg_classes is None:
+        seg_names = []
+        n_seg = 0
+    else:
+        with open(seg_classes, 'r') as f:
+            seg_names = f.read().splitlines()
+        n_seg = len(seg_names)
 
     # read model config
     if not os.path.exists(model_config):
@@ -283,7 +310,10 @@ def main():
 
     # load model if provided
     if in_model:
-        model = tf.keras.models.load_model(in_model)
+        if load_weights:
+            model.load_weights(in_model)
+        else:
+            model = tf.keras.models.load_model(in_model)
 
     # Loss functions
     losses = loss_list(SSDLosses(3), DeeplabLoss(), n_det, n_seg)
@@ -386,14 +416,18 @@ def main():
     training_step = get_training_step(model, losses, loss_weights,
                                       optimizer, n_det, n_seg, l2_weight)
 
-    # open logfile
+    # open logfile & create TensorBoard writers
     if logs:
         ts = time.strftime("%Y%m%d-%H%M%S")
         csv_file = open(f"{logs}/history-{ts}.csv", "a", newline="")
         csv_writer = csv.writer(csv_file)
+        tf_train_dir = f"{logs}/TensorBoard/{ts}/train"
+        tf_val_dir = f"{logs}/TensorBoard/{ts}/validation"
+        tf_train_writer = tf.summary.create_file_writer(tf_train_dir)
+        tf_val_writer = tf.summary.create_file_writer(tf_val_dir)
 
     # minimum loss so far
-    min_loss = infty
+    min_loss = np.infty
 
     # number of non-improvements
     non_improved = 0
@@ -418,10 +452,10 @@ def main():
         start_time = time.time()
         for batch in tqdm(
                 iterable=train_ds_batch,
-                desc=f"Epoch {epoch+1}",
+                desc=f"Epoch {epoch}",
                 unit='bt',
                 total=num_batches):
-            img, gt = batch
+            img, gt, org_img, name = batch
             ll = training_step(img, gt)
             if n_seg == 0:
                 train_conf_loss += ll[1].numpy()
@@ -447,13 +481,20 @@ def main():
         train_locs_loss /= train_num
         train_segs_loss /= train_num
         train_loss /= train_num
-        out = [epoch+1, lr, train_time, train_loss]
-        if n_det > 0:
-            out += [train_conf_loss, train_locs_loss]
-        if n_seg > 0:
-            out += [train_segs_loss]
-        print(f"Epoch {epoch+1}: lr={lr}, time={train_time}, "
-              f"loss={train_loss}")
+        print(f"Epoch {epoch}: lr={lr}, time={train_time}, loss={train_loss}")
+        if logs:
+            out = [epoch, lr, train_time, train_loss]
+            with tf_train_writer.as_default():
+                tf.summary.scalar('loss', train_loss, step=epoch)
+                if n_det > 0:
+                    out += [train_conf_loss, train_locs_loss]
+                    tf.summary.scalar('conf_loss', train_conf_loss, step=epoch)
+                    tf.summary.scalar('locs_loss', train_locs_loss, step=epoch)
+                if n_seg > 0:
+                    out += [train_segs_loss]
+                    tf.summary.scalar('segs_loss', train_segs_loss, step=epoch)
+                tf.summary.image("Training orig", org_img/255., step=epoch)
+                tf.summary.image("Training prep", img, step=epoch)
         # validation run
         val_conf_loss = 0.0
         val_locs_loss = 0.0
@@ -462,7 +503,7 @@ def main():
         val_num = 0
         start_time = time.time()
         for batch in val_ds_batch:
-            img, gt = batch
+            img, gt, org_img, name = batch
             pr = model(img, training=False)
             ll = losses(gt, pr)
             if n_seg == 0:
@@ -477,25 +518,81 @@ def main():
             val_loss += sum([li*wi for li, wi in zip(ll, loss_weights)])
             val_loss = val_loss.numpy()
             val_num += 1
+        # display first image from last batch
+        if n_seg == 0:
+            p_conf, p_locs = pr
+            p_conf = p_conf[0].numpy()
+            p_locs = p_locs[0].numpy()
+            g_clss, g_locs = gt
+            g_clss = g_clss[0].numpy()
+            g_locs = g_locs[0].numpy()
+        elif n_det == 0:
+            p_segs = pr
+            p_segs = p_segs[0].numpy()
+            g_segs = gt
+            g_segs = g_segs[0].numpy()
+        else:
+            p_conf, p_locs, p_segs = pr
+            p_conf = p_conf[0].numpy()
+            p_locs = p_locs[0].numpy()
+            p_segs = p_segs[0].numpy()
+            g_clss, g_locs, g_segs = gt
+            g_clss = g_clss[0].numpy()
+            g_locs = g_locs[0].numpy()
+            g_segs = g_segs[0].numpy()
+        name = name[0].numpy().decode('utf-8')
+        img = img[0].numpy()
+        org_img = org_img[0].numpy()
+        if n_det > 0:
+            g_conf = np.eye(n_det)[g_clss] * 100.
+            # print(p_conf[g_clss != 0])
+            p_cl, p_sc, p_yx = bbox_util.pred_to_boxes(p_conf, p_locs)
+            g_cl, g_sc, g_yx = bbox_util.pred_to_boxes(g_conf, g_locs)
+            det_boxes = boxes_image(org_img, p_cl, p_sc, p_yx, det_names)
+            org_boxes = boxes_image(org_img, g_cl, g_sc, g_yx, det_names)
         val_time = time.time() - start_time
         val_conf_loss /= val_num
         val_locs_loss /= val_num
         val_segs_loss /= val_num
         val_loss /= val_num
-        out += [val_time, val_loss]
-        if n_det > 0:
-            out += [val_conf_loss, val_locs_loss]
-        if n_seg > 0:
-            out += [val_segs_loss]
-        print(f"Epoch {epoch+1}: val. time={val_time}, val. loss={val_loss}")
+        print(f"Epoch {epoch}: val. time={val_time}, val. loss={val_loss}")
         if logs:
+            out += [val_time, val_loss]
+            with tf_val_writer.as_default():
+                tf.summary.scalar('loss', val_loss, step=epoch)
+                if n_det > 0:
+                    out += [val_conf_loss, val_locs_loss]
+                    tf.summary.scalar('conf_loss', val_conf_loss, step=epoch)
+                    tf.summary.scalar('locs_loss', val_locs_loss, step=epoch)
+                    tf.summary.image(
+                        "Objects",
+                        np.expand_dims(org_boxes/255., axis=0),
+                        step=epoch)
+                    tf.summary.image(
+                        "Detections",
+                        np.expand_dims(det_boxes/255., axis=0),
+                        step=epoch)
+                if n_seg > 0:
+                    out += [val_segs_loss]
+                    tf.summary.scalar('segs_loss', val_segs_loss, step=epoch)
+                tf.summary.image(
+                    "Validation orig",
+                    np.expand_dims(org_img/255., axis=0),
+                    step=epoch)
+                tf.summary.image(
+                    "Validation prep",
+                    np.expand_dims(img, axis=0),
+                    step=epoch)
             csv_writer.writerow(out)
             csv_file.flush()
         # best model so far?
         if (val_loss < min_loss) and out_model:
             print(f"New minimum loss {val_loss} - saving model")
             min_loss = val_loss
-            model.save(out_model)
+            if save_weights:
+                model.save_weights(out_model)
+            else:
+                model.save(out_model)
             non_improved = 0
         elif epoch > warmup_epochs + min_epochs:
             non_improved += 1

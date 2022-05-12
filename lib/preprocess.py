@@ -127,17 +127,21 @@ def preprocess(prep: Callable, size: Tuple[int],
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
         if prep is not None:
-            image = prep(image)
+            train_image = prep(image)
+        else:
+            train_image = image
         gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
         # return preprocessed image & data
-        return image, (gt_clss, gt_locs)
+        return train_image, (gt_clss, gt_locs), image, name
 
     def _preprocess_seg(image, boxes_cl, boxes_yx, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
         if prep is not None:
-            image = prep(image)
+            train_image = prep(image)
+        else:
+            train_image = image
         # resize mask
         mask = tf.image.resize(mask, size, method='nearest')
         # reshape - get rid of last dimension
@@ -146,14 +150,16 @@ def preprocess(prep: Callable, size: Tuple[int],
         mask = tf.clip_by_value(mask, 0, n_seg-1)
         mask = tf.cast(mask, tf.uint8)
         # return preprocessed image & data
-        return image, mask
+        return train_image, mask, image, name
 
     def _preprocess_both(image, boxes_cl, boxes_yx, mask, has_mask, name):
         # resize image
         image = tf.image.resize(image, size, antialias=True)
         # first step of pre-processing
         if prep is not None:
-            image = prep(image)
+            train_image = prep(image)
+        else:
+            train_image = image
         # map defaults to boxes
         gt_clss, gt_locs = bbox_utils.map_defaults_yx(boxes_cl, boxes_yx)
         # resize mask
@@ -164,7 +170,7 @@ def preprocess(prep: Callable, size: Tuple[int],
         mask = tf.clip_by_value(mask, 0, n_seg-1)
         mask = tf.cast(mask, tf.uint8)
         # return preprocessed image & data
-        return image, (gt_clss, gt_locs, mask)
+        return train_image, (gt_clss, gt_locs, mask), image, name
 
     if bbox_utils is None:
         return _preprocess_seg

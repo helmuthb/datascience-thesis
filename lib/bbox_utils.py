@@ -7,7 +7,6 @@ The functions use numpy for manipulations.
 """
 
 import tensorflow as tf
-import numpy as np
 
 __author__ = 'Helmuth Breitenfellner'
 __copyright__ = 'Copyright 2022, Christian Doppler Laboratory for ' \
@@ -255,12 +254,12 @@ class BBoxUtils(object):
         if n == 0:
             return tf.constant([], dtype=tf.int32)
         # sort boxes by score descending
-        # idx = tf.argsort(boxes_sc, direction='DESCENDING')
-        idx = np.argsort(-boxes_sc.numpy())
+        idx = tf.argsort(boxes_sc, direction='DESCENDING')
+        # idx = np.argsort(-boxes_sc.numpy())
         boxes_sc = tf.gather(boxes_sc, idx)
         boxes_yx = tf.gather(boxes_yx, idx)
         # get iou values
-        iou = iou_yx(boxes_yx, boxes_yx, clip_to=1)
+        iou = iou_yx(boxes_yx, boxes_yx, clip_to=1.)
         # get numpy versions
         boxes_sc = boxes_sc.numpy()
         boxes_yx = boxes_yx.numpy()
@@ -293,20 +292,23 @@ class BBoxUtils(object):
         """
         pr_cw = self._decode_cw(pr_locs)
         pr_yx = to_yx(pr_cw)
+        pr_conf = tf.cast(pr_conf, tf.float32)
         pr_sc = tf.math.softmax(pr_conf, axis=-1)
         # use only non-background
         pr_cl = tf.argmax(pr_sc[..., 1:], axis=-1) + 1
         pr_max_sc = tf.reduce_max(pr_sc[..., 1:], axis=-1)
 
         # perform non-maximum suppression
-        idx = self._nms_yx(pr_max_sc, pr_yx)
-        # idx = tf.image.non_max_suppression(
-        #     boxes=pr_yx,
-        #     scores=pr_max_sc,
-        #     max_output_size=self.top_k,
-        #     iou_threshold=self.iou_threshold,
-        #     score_threshold=self.min_confidence
-        # )
+        # idx = self._nms_yx(pr_max_sc, pr_yx)
+        # """
+        idx = tf.image.non_max_suppression(
+            boxes=pr_yx,
+            scores=pr_max_sc,
+            max_output_size=self.top_k,
+            iou_threshold=self.iou_threshold,
+            score_threshold=self.min_confidence
+        )
+        # """
 
         pr_max_sc = tf.gather(pr_max_sc, idx)
         pr_yx = tf.gather(pr_yx, idx)

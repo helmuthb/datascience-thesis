@@ -25,7 +25,7 @@ __status__ = 'Experimental'
 class SSDLosses():
     """SSD Loss components.
     """
-    def __init__(self, neg_ratio, focal_weight=0.5, box_weight=0.5,
+    def __init__(self, neg_ratio, focal_weight=0.0, box_weight=1.0,
                  epsilon=1e-7, gamma=2., alpha=1.):
         self.neg_ratio = tf.constant(neg_ratio)
         self.focal_weight = tf.constant(focal_weight)

@@ -8,6 +8,8 @@ from tensorflow.keras.applications.vgg16 import (
 def vgg16_model(input_tensor: tf.Tensor) -> tuple:
     weight_layers = VGG16(include_top=True)
     prep = vgg16_prep
+    # modified / simplified prep
+    prep = lambda img: (img / 127.) - 1.
     # recreate vgg16 layers but using a slightly different config
     x = input_tensor
     blocks = [
